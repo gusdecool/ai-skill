@@ -5,7 +5,11 @@ that read the shared skills folder.
 
 ## Skills
 
-- [mysql-branch](#mysql-branch): a separate MySQL database for each git branch.
+| Skill | Use case | Details |
+|---|---|---|
+| `/gusdecool:mysql-branch` | MySQL branching: one database per git branch | [SKILL.md](skills/mysql-branch/SKILL.md) |
+
+In Claude Code the skill is `/gusdecool:<name>`. In other agents, say its name, for example "use MySQL branch".
 
 ## Install
 
