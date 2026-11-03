@@ -22,8 +22,8 @@ done
 
 while IFS= read -r file; do
   case "$file" in skills/*/SKILL.md) continue ;; esac
-  awk -v f="$file" 'length > 120 { print "FAIL: " f ":" FNR " is " length " chars"; bad = 1 } END { exit bad }' "$file" \
-    || FAILS=$((FAILS + 1))
+  awk -v f="$file" 'length > 120 { print "FAIL: " f ":" FNR " is " length " chars"; bad = 1 }
+                    END { exit bad }' "$file" || FAILS=$((FAILS + 1))
 done < <(git ls-files '*.sh' '*.md' '*.json' '*.yml')
 
 [ "$FAILS" -eq 0 ] && echo "Structure checks passed"
