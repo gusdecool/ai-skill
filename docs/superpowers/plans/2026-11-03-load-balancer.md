@@ -44,4 +44,4 @@ orchestrator tool, and carries the selection rules plus an Orca adapter. The glo
 **Files:**
 - Modify: `agent-standards/global/AGENTS.md` sections 10 and 11 (separate repo and PR; see its plan)
 
-- [ ] **Step 1: Done in the agent-standards repo, plan `2026-11-03-load-balancer-pointer.md`**
+- [x] **Step 1: Done in the agent-standards repo, plan `2026-11-03-load-balancer-pointer.md`**
