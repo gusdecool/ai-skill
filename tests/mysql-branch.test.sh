@@ -10,7 +10,7 @@ WORK="$(mktemp -d)"
 FAILS=0
 
 # Removes the test container and temp dir.
-# shellcheck disable=SC2329 # invoked by the EXIT trap
+# shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
 cleanup() { docker rm -f "$MYSQL_BRANCH_CONTAINER" >/dev/null 2>&1; rm -rf "$WORK"; }
 trap cleanup EXIT
 
