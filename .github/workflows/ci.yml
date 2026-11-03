@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Shellcheck
+        run: shellcheck skills/*/scripts/*.sh tests/*.sh
+      - name: Structure checks
+        run: bash tests/check-structure.sh
+      - name: Integration tests
+        run: bash tests/mysql-branch.test.sh

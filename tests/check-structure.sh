@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Static checks: skill frontmatter, plugin JSON, and the 120 character line limit.
+set -uo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+FAILS=0
+
+# Prints a failure message and counts it.
+fail() { echo "FAIL: $*"; FAILS=$((FAILS + 1)); }
+
+for skill in skills/*/SKILL.md; do
+  dir="$(basename "$(dirname "$skill")")"
+  name="$(sed -n 's/^name:[[:space:]]*//p' "$skill" | head -n1)"
+  desc="$(sed -n 's/^description:[[:space:]]*//p' "$skill" | head -n1)"
+  [ "$name" = "$dir" ] || fail "$skill: name '$name' does not match folder '$dir'"
+  [ -n "$desc" ] || fail "$skill: missing description"
+done
+
+for json in .claude-plugin/plugin.json .claude-plugin/marketplace.json; do
+  jq -e . "$json" >/dev/null 2>&1 || fail "$json is not valid JSON"
+done
+
+while IFS= read -r file; do
+  case "$file" in skills/*/SKILL.md) continue ;; esac
+  awk -v f="$file" 'length > 120 { print "FAIL: " f ":" FNR " is " length " chars"; bad = 1 } END { exit bad }' "$file" \
+    || FAILS=$((FAILS + 1))
+done < <(git ls-files '*.sh' '*.md' '*.json' '*.yml')
+
+[ "$FAILS" -eq 0 ] && echo "Structure checks passed"
+exit "$FAILS"

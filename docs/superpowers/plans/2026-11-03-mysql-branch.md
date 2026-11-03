@@ -6,7 +6,8 @@
 **Goal:** A public, installable skill that gives each git branch its own MySQL database cloned from a template.
 
 **Architecture:** One bash script (`docker exec` to the MySQL container) with a registry table for safety, a
-`SKILL.md` that tells agents when and how to call it, and plugin manifests so Claude Code gets `/gusdecool:mysql-branch`.
+`SKILL.md` that tells agents when and how to call it, and plugin manifests so Claude Code gets
+`/gusdecool:mysql-branch`.
 
 **Tech Stack:** bash, awk, Docker, MySQL 8.0, Claude Code plugin manifests.
 

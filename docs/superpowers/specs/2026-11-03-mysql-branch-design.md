@@ -21,7 +21,7 @@ touches the shared dev database. MySQL has no copy-on-write branching (unlike Ne
 
 | Command | Behavior |
 |---|---|
-| `template [--schema-only]` | Rebuild `<app>_template` from `source`. Refuses to overwrite a database it did not create. |
+| `template [--schema-only]` | Rebuild `<app>_template` from `source`. Never overwrites a database it did not make. |
 | `create [branch] [--schema-only]` | Clone the template into `<app>_<branch-slug>`, register it, then run `use`. |
 | `use [branch]` | Rewrite `env_var` in `env_file` to point at the branch database. |
 | `name [branch]` | Print the branch database name. |
