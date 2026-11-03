@@ -7,13 +7,13 @@ that read the shared skills folder.
 
 | Skill | Use case | Details |
 |---|---|---|
-| `/gusdecool:mysql-branch` | MySQL branching: one database per git branch / worktree | [SKILL.md][mysql-branch] |
 | `/gusdecool:load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][load-balancer] |
+| `/gusdecool:mysql-branch` | MySQL branching: one database per git branch / worktree | [SKILL.md][mysql-branch] |
 
 In Claude Code the skill is `/gusdecool:<name>`. In other agents, say its name, for example "use MySQL branch".
 
-[mysql-branch]: skills/mysql-branch/SKILL.md
 [load-balancer]: skills/load-balancer/SKILL.md
+[mysql-branch]: skills/mysql-branch/SKILL.md
 
 ## Install
 
