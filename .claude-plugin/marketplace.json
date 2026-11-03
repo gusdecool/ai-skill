@@ -1,0 +1,11 @@
+{
+  "name": "gusdecool",
+  "owner": { "name": "Budi Arsana" },
+  "plugins": [
+    {
+      "name": "gusdecool",
+      "source": "./",
+      "description": "AI agent skills by gusdecool. First skill: mysql-branch, a MySQL database per git branch."
+    }
+  ]
+}

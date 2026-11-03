@@ -60,9 +60,9 @@
 **Files:**
 - Create: `skills/mysql-branch/SKILL.md`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `README.md`
 
-- [ ] **Step 1: Write `SKILL.md`** with trigger description ("use MySQL branch"), the `.mysql-branch` format, the
+- [x] **Step 1: Write `SKILL.md`** with trigger description ("use MySQL branch"), the `.mysql-branch` format, the
   command flow, and the rule that the agent confirms with the user before `drop --yes`.
-- [ ] **Step 2: Write the plugin and marketplace manifests** (plugin name `gusdecool`), validate with
+- [x] **Step 2: Write the plugin and marketplace manifests** (plugin name `gusdecool`), validate with
   `claude plugin validate .` if available.
-- [ ] **Step 3: Write `README.md`** with both install paths, quickstart, limits.
-- [ ] **Step 4: Commit, push, open the PR, watch CI if any.**
+- [x] **Step 3: Write `README.md`** with both install paths, quickstart, limits.
+- [x] **Step 4: Commit, push, open the PR, watch CI if any.**
