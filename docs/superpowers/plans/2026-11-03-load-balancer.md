@@ -1,7 +1,7 @@
 # load-balancer Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
-> superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** A skill that spreads implementation tasks across AI providers by quota, called from any agent.
 
@@ -37,7 +37,7 @@ orchestrator tool, and carries the selection rules plus an Orca adapter. The glo
 - [x] **Step 1: Write `SKILL.md` with the sections in the spec; every Review Focus line has an explicit rule**
 - [x] **Step 2: Add the README row for `/gusdecool:load-balancer`**
 - [x] **Step 3: Run `bash tests/check-structure.sh`; expected `Structure checks passed`**
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ### Task 2: Trim the global AGENTS.md (judgment)
 
