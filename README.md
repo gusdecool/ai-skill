@@ -5,61 +5,122 @@ that read the shared skills folder.
 
 ## Skills
 
-### mysql-branch
-
-A separate MySQL database for each git branch, so feature work stops touching your shared local dev database.
-MySQL has no copy-on-write branching like Neon, so a branch is a full copy of a template database. It runs on
-MySQL in Docker, which keeps your server version identical to production.
-
-Tell your agent: **"use MySQL branch"**.
-
-How it works:
-
-1. `template` copies your local dev database into `<app>_template`.
-2. `create` clones the template into `<app>_<branch>` and rewrites the database name in your env file.
-3. `list` shows active and stale branch databases; `drop <branch> --yes` removes one.
-
-Safety: the script records every database it creates and only ever drops those. It never connects to a live server.
-
-Per-repo config, a `.mysql-branch` file in the repo root:
-
-```
-app=myapp
-source=myapp_dev
-env_file=.env.local
-env_var=DATABASE_URL
-```
-
-Defaults: container `mysql`, user `root`, password read from the container's `MYSQL_ROOT_PASSWORD`.
-Override with `MYSQL_BRANCH_CONTAINER`, `MYSQL_BRANCH_USER` and `MYSQL_BRANCH_PASSWORD`.
-
-Limits: full copies are slow for big data; views or routines that hardcode the source database name still point at
-it; remote-only git branches show as stale.
+- [mysql-branch](#mysql-branch): a separate MySQL database for each git branch.
 
 ## Install
 
-Claude Code, as a plugin (skills are namespaced, so this one is `/gusdecool:mysql-branch`):
+You need Docker (for the MySQL your apps use) and git. Pick one way.
+
+### Option A: any agent (Claude Code, Codex and others)
+
+```
+npx skills add gusdecool/ai-skill
+```
+
+The `skills` tool asks which skills and which agents to install for. Choose `mysql-branch`. It lands in
+`~/.agents/skills/`, which Codex and other agents read, and it is linked into `~/.claude/skills/` for Claude Code.
+
+### Option B: Claude Code plugin
+
+Inside Claude Code:
 
 ```
 /plugin marketplace add gusdecool/ai-skill
 /plugin install gusdecool@gusdecool
 ```
 
-Any agent (Claude Code, Codex and others), as a plain skill:
+Plugin skills are namespaced, so the command becomes `/gusdecool:mysql-branch`. Every skill added to this repo later
+shows up as `/gusdecool:<skill-name>`.
+
+### Check it works
+
+Restart or open a new agent session and ask: "what skills do you have?" You should see `mysql-branch`.
+To update later, run `npx skills update` (Option A) or `/plugin marketplace update gusdecool` (Option B).
+
+## mysql-branch
+
+### Why
+
+You run MySQL in Docker, and every project connects to the same database. Start a feature branch, run a migration
+or a seed script, and you have changed the data every other branch and project is using. Postgres users can use
+Neon-style branching for this. MySQL has no equivalent.
+
+The tempting fix is a hosted MySQL with branching, or a different engine. That breaks when your live server is
+MySQL: your local database must behave exactly like production, so you want the same engine and the same version
+(the Docker image).
+
+So this skill keeps real MySQL and adds the branching around it:
+
+- Each git branch gets its own database, cloned from a template.
+- The branch's env file is pointed at that database for you, so nothing in your app changes.
+- Experiments, failed migrations and test data stay in the branch. Drop it when you are done.
+
+It is a full copy, not copy-on-write like Neon, so it suits databases up to a few GB. For very large data, use
+`--schema-only` to copy just the structure.
+
+### How to use it
+
+**One-time setup per repo.** Create `.mysql-branch` in the repo root:
 
 ```
-npx skills add gusdecool/ai-skill
+app=myapp                # prefix for branch databases
+source=myapp_dev         # your existing local database, the template is copied from it
+env_file=.env.local      # the file that holds your connection setting
+env_var=DATABASE_URL     # the variable to rewrite (it must already exist in that file)
 ```
 
-Then say "use MySQL branch" (Claude plugin users can also run `/gusdecool:mysql-branch`).
+`env_var` can be a URL (`mysql://user:pass@127.0.0.1:3306/myapp_dev?serverVersion=8.0`, only the database name
+changes) or a plain name (`DB_NAME=myapp_dev`).
+
+**Day to day, just tell your agent:**
+
+> use MySQL branch
+
+The agent creates the template if it is missing, clones it for your current git branch and updates the env file.
+You can also ask for the others in plain words: "list my MySQL branches", "drop the MySQL branch for
+feat/login" (it asks you to confirm before dropping).
+
+**Or run the script yourself** (it lives in the skill's `scripts/` folder, run it from your repo):
+
+| Command | What it does |
+|---|---|
+| `mysql-branch.sh template [--schema-only]` | Build or refresh `<app>_template` from `source`. |
+| `mysql-branch.sh create [branch] [--schema-only]` | New database `<app>_<branch>`, then point the env file at it. |
+| `mysql-branch.sh use [branch]` | Switch the env file to an existing branch database. |
+| `mysql-branch.sh name [branch]` | Print the database name. |
+| `mysql-branch.sh list` | Show the template and branch databases as active or stale. |
+| `mysql-branch.sh drop [branch] --yes` | Remove a branch database. |
+
+`branch` defaults to the current git branch. Stale means the git branch is gone: a hint to clean up, never done
+automatically.
+
+### Safety
+
+- The script records every database it creates and only ever drops those. Your own databases are refused.
+- It runs only against the local Docker MySQL and never connects to a live server.
+- The template is built from your local `source` database, so refresh it (`template`) after you merge new
+  migrations.
+
+### Connection settings
+
+Defaults: container `mysql`, user `root`, password read from the container's `MYSQL_ROOT_PASSWORD` (so it never sits
+in your repo or on a command line). Override with `MYSQL_BRANCH_CONTAINER`, `MYSQL_BRANCH_USER` and
+`MYSQL_BRANCH_PASSWORD`.
+
+### Limits
+
+Full copies are slow for big data. Views or routines that hardcode the source database name still point at it.
+Branches that exist only on the remote show as stale.
 
 ## Development
 
 ```
+bash tests/check-structure.sh
 bash tests/mysql-branch.test.sh
 ```
 
-The tests start a throwaway `mysql:8.0` container and remove it at the end. Docker is required.
+The integration tests start a throwaway `mysql:8.0` container and remove it at the end. Docker is required.
+CI runs the same checks plus `shellcheck`.
 
 ## License
 
