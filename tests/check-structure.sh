@@ -16,7 +16,8 @@ for skill in skills/*/SKILL.md; do
   [ -n "$desc" ] || fail "$skill: missing description"
 done
 
-for json in .claude-plugin/plugin.json .claude-plugin/marketplace.json; do
+for json in .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-plugin/plugin.json \
+  .agents/plugins/marketplace.json; do
   jq -e . "$json" >/dev/null 2>&1 || fail "$json is not valid JSON"
 done
 
