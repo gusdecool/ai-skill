@@ -9,7 +9,7 @@
   "keywords": ["mysql", "git", "branching", "docker", "skills"],
   "interface": {
     "displayName": "gusdecool skills",
-    "shortDescription": "A MySQL database per git branch",
+    "shortDescription": "A MySQL database per git branch or worktree",
     "developerName": "Budi Arsana",
     "category": "Developer Tools",
     "defaultPrompt": ["Use MySQL branch to give this git branch its own database."]
