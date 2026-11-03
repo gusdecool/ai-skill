@@ -32,10 +32,19 @@ Inside Claude Code:
 Plugin skills are namespaced, so the command becomes `/gusdecool:mysql-branch`. Every skill added to this repo later
 shows up as `/gusdecool:<skill-name>`.
 
+### Option C: Codex plugin
+
+```
+codex plugin marketplace add gusdecool/ai-skill
+codex plugin add gusdecool
+```
+
 ### Check it works
 
 Restart or open a new agent session and ask: "what skills do you have?" You should see `mysql-branch`.
-To update later, run `npx skills update` (Option A) or `/plugin marketplace update gusdecool` (Option B).
+To update later, run `npx skills update` (Option A),
+`/plugin marketplace update gusdecool` (Option B)
+or `codex plugin marketplace upgrade` (Option C).
 
 ## mysql-branch
 
