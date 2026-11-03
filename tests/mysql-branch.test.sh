@@ -10,6 +10,7 @@ WORK="$(mktemp -d)"
 FAILS=0
 
 # Removes the test container and temp dir.
+# shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
 cleanup() { docker rm -f "$MYSQL_BRANCH_CONTAINER" >/dev/null 2>&1; rm -rf "$WORK"; }
 trap cleanup EXIT
 
@@ -32,7 +33,7 @@ for _ in $(seq 1 90); do
 done
 until sql "SELECT 1" >/dev/null; do sleep 1; done
 
-mkdir -p "$WORK/repo" && cd "$WORK/repo"
+mkdir -p "$WORK/repo" && cd "$WORK/repo" || exit 1
 git init -q -b main . && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
 printf 'app=shop\nsource=shop_dev\nenv_file=.env.local\nenv_var=DATABASE_URL\n' >.mysql-branch
 printf 'APP_ENV=dev\nDATABASE_URL="mysql://u:p@127.0.0.1:3306/shop_dev?serverVersion=8.0"\n' >.env.local
