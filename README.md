@@ -8,10 +8,12 @@ that read the shared skills folder.
 | Skill | Use case | Details |
 |---|---|---|
 | `/gusdecool:mysql-branch` | MySQL branching: one database per git branch / worktree | [SKILL.md][mysql-branch] |
+| `/gusdecool:load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][load-balancer] |
 
 In Claude Code the skill is `/gusdecool:<name>`. In other agents, say its name, for example "use MySQL branch".
 
 [mysql-branch]: skills/mysql-branch/SKILL.md
+[load-balancer]: skills/load-balancer/SKILL.md
 
 ## Install
 
@@ -23,7 +25,7 @@ You need Docker (for the MySQL your apps use) and git. Pick one way.
 npx skills add gusdecool/ai-skill
 ```
 
-The `skills` tool asks which skills and which agents to install for. Choose `mysql-branch`. It lands in
+The `skills` tool asks which skills and which agents to install for. Choose the skills you want. It lands in
 `~/.agents/skills/`, which Codex and other agents read, and it is linked into `~/.claude/skills/` for Claude Code.
 
 ### Option B: Claude Code plugin
