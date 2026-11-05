@@ -1,0 +1,49 @@
+{
+  "result": {
+    "rateLimits": {
+      "claude": {
+        "status": "ok",
+        "session": {
+          "usedPercent": 31,
+          "windowMinutes": 300,
+          "resetsAt": 1000005040000,
+          "resetDescription": "x"
+        },
+        "weekly": {
+          "usedPercent": 81,
+          "windowMinutes": 10080,
+          "resetsAt": 1000117000000,
+          "resetDescription": "x"
+        }
+      },
+      "codex": {
+        "status": "ok",
+        "session": {
+          "usedPercent": 1,
+          "windowMinutes": 300,
+          "resetsAt": 1000012600000,
+          "resetDescription": "x"
+        },
+        "weekly": {
+          "usedPercent": 15,
+          "windowMinutes": 10080,
+          "resetsAt": 1000575280000,
+          "resetDescription": "x"
+        }
+      },
+      "antigravity": {
+        "status": "ok",
+        "session": null,
+        "weekly": {
+          "usedPercent": 9,
+          "windowMinutes": 10080,
+          "resetsAt": 1000465840000,
+          "resetDescription": "x"
+        }
+      },
+      "claudeTarget": {
+        "note": "ignored"
+      }
+    }
+  }
+}

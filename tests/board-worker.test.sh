@@ -7,6 +7,7 @@ LIB="$REPO/skills/board-worker/scripts/board-lib.sh"
 CHECK="$REPO/skills/board-worker/scripts/board-check-ready"
 PICK="$REPO/skills/board-worker/scripts/board-pick-next"
 SETSTATUS="$REPO/skills/board-worker/scripts/board-set-status"
+PICKPROV="$REPO/skills/board-worker/scripts/pick-provider"
 FIX="$REPO/tests/fixtures/board"
 export STUB_DIR
 STUB_DIR="$(mktemp -d)"
@@ -160,6 +161,62 @@ assert_eq "set-status rejects an unknown status with 2" "2" "$?"
 assert_eq "set-status does not edit on an unknown status" "0" "$(grep -c '^project item-edit' "$STUB_DIR/calls.log")"
 bash "$SETSTATUS" https://github.com/gusdecool/x/issues/999 Done 2>/dev/null
 assert_eq "set-status rejects an unknown card with 2" "2" "$?"
+
+echo "Pick provider"
+cat >"$STUB_DIR/orca" <<'STUB'
+#!/usr/bin/env bash
+# Test stub for orca: prints the fixture named by $ACCOUNTS_FIXTURE for "account list --json".
+cat "$ACCOUNTS_FIXTURE"
+STUB
+chmod +x "$STUB_DIR/orca"
+cat >"$STUB_DIR/codex-models.json" <<'JSON'
+{"models":[{"slug":"gpt-6-sol","visibility":"list"},{"slug":"gpt-6.1-sol","visibility":"list"},
+ {"slug":"gpt-7-sol","visibility":"hide"},{"slug":"gpt-5.6-sol","visibility":"list"},
+ {"slug":"gpt-6.1-terra","visibility":"list"}]}
+JSON
+
+# Runs pick-provider against a fixture at the fixed clock, storing stdout in OUT and the exit code in CODE.
+run_provider() {
+  ACCOUNTS_FIXTURE="$1" ORCA_BIN="$STUB_DIR/orca" CODEX_MODELS_CACHE="$STUB_DIR/codex-models.json" \
+    NOW_MS=1000000000000 bash "$PICKPROV" 2>/dev/null
+}
+# Writes a modified copy of the accounts fixture, built from a jq filter, to $STUB_DIR/accounts.json.
+tweak_accounts() { jq "$1" "$FIX/accounts.json" >"$STUB_DIR/accounts.json"; }
+
+OUT="$(run_provider "$FIX/accounts.json")"
+CODE=$?
+assert_eq "worked example picks codex" \
+  '{"provider":"codex","model":"gpt-6.1-sol","tier":"workhorse"}' "$(jq -c . <<<"$OUT")"
+assert_eq "worked example exits 0" "0" "$CODE"
+
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rateLimits.claude.session.usedPercent = 5
+  | .result.rateLimits.codex.status = "error"'
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+assert_eq "provider with status not ok is skipped" "claude" "$(jq -r .provider <<<"$OUT")"
+assert_eq "claude gets its model" "claude-sonnet-5-5" "$(jq -r .model <<<"$OUT")"
+
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 76 | .result.rateLimits.codex.status = "error"'
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+assert_eq "claude over its reserved weekly cutoff is skipped" "antigravity" "$(jq -r .provider <<<"$OUT")"
+assert_eq "antigravity gets its model" "gemini-3.8-flash" "$(jq -r .model <<<"$OUT")"
+
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rateLimits.codex.session.usedPercent = 90
+  | .result.rateLimits.antigravity.weekly.usedPercent = 95'
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+assert_eq "others are skipped at 90 session or 95 weekly" "claude" "$(jq -r .provider <<<"$OUT")"
+
+tweak_accounts '.result.rateLimits.claude.session.usedPercent = 80 | .result.rateLimits.codex.session.usedPercent = 90
+  | .result.rateLimits.antigravity.weekly.usedPercent = 95'
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+CODE=$?
+assert_eq "all over cutoff exits 1" "1" "$CODE"
+assert_eq "all over cutoff reports the earliest reset" \
+  '{"error":"all providers over cutoff","earliestResetsAt":1000012600000}' "$(jq -c . <<<"$OUT")"
+
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rateLimits.claude.session.usedPercent = 5
+  | .result.rateLimits.codex = .result.rateLimits.claude | .result.rateLimits.antigravity.status = "error"'
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+assert_eq "a tie goes to claude" "claude" "$(jq -r .provider <<<"$OUT")"
 
 if [ "$FAILS" -eq 0 ]; then echo "All board-worker tests passed"; fi
 exit "$FAILS"

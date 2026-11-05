@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Picks the provider and Workhorse-tier model for the next worker, by remaining quota.
+# Usage: pick-provider
+# Prints {"provider","model","tier"} and exits 0, or {"error","earliestResetsAt"} and exits 1 when every provider is
+# over a cutoff or unavailable. Exits 2 when quotas cannot be read.
+# Rules and numbers are copied from skills/load-balancer/SKILL.md: cutoffs 90 session / 95 weekly (80 / 75 for the
+# reserved provider, claude, which runs this skill); urgency = remaining / max(timeLeftFraction, 0.05) per window;
+# the highest window urgency is the score; scores within 5 percent tie and go to claude, then to the listed order.
+# Env: ORCA_BIN (default orca), CODEX_MODELS_CACHE (default ~/.codex/models_cache.json), NOW_MS (clock, for tests).
+set -euo pipefail
+
+# Prints the highest visible Sol model slug from the Codex models cache (compared by version number).
+codex_model() {
+  jq -r '[.models[] | select(.visibility == "list")
+          | (.slug | capture("^gpt-(?<v>[0-9.]+)-sol$")?) as $m | select($m)
+          | {slug: .slug, v: ($m.v | split(".") | map(tonumber))}]
+         | sort_by(.v) | last | .slug // empty' "${CODEX_MODELS_CACHE:-$HOME/.codex/models_cache.json}"
+}
+
+accounts="$("${ORCA_BIN:-orca}" account list --json)" || { echo "pick-provider: cannot read quotas" >&2; exit 2; }
+now_ms="${NOW_MS:-$(($(date +%s) * 1000))}"
+
+# Keep only the three known providers, in listed order, scored; blocked ones carry the time they free up.
+result="$(jq -c --argjson now "$now_ms" '
+  def cutoffs($p): if $p == "claude" then {session: 80, weekly: 75} else {session: 90, weekly: 95} end;
+  def urgency($w): (100 - $w.usedPercent)
+    / ([($w.resetsAt - $now) / ($w.windowMinutes * 60000), 0.05] | max);
+  [.result.rateLimits | to_entries[] | select(.key | IN("claude", "codex", "antigravity"))
+   | select(.value.status == "ok") | .key as $p | cutoffs($p) as $c
+   | [{n: "session", w: .value.session}, {n: "weekly", w: .value.weekly}] | map(select(.w != null)) as $ws
+   | ($ws | map(select(.w.usedPercent >= $c[.n]))) as $blocked
+   | {provider: $p,
+      freeAt: ($blocked | map(.w.resetsAt) | max),
+      score: ($ws | map(urgency(.w)) | max)}]' <<<"$accounts")"
+
+eligible="$(jq -c '[.[] | select(.freeAt == null)]' <<<"$result")"
+if [ "$(jq length <<<"$eligible")" -eq 0 ]; then
+  jq -c '{error: "all providers over cutoff", earliestResetsAt: (map(.freeAt) | min)}' <<<"$result"
+  exit 1
+fi
+
+# Highest score wins; within 5 percent of it, claude wins, else the first listed.
+provider="$(jq -r '(map(.score) | max) as $top | [.[] | select(.score >= $top * 0.95)]
+  | (map(select(.provider == "claude")) + .)[0].provider' <<<"$eligible")"
+
+case "$provider" in
+  claude) model="claude-sonnet-5-5" ;;
+  codex) model="$(codex_model)"; [ -n "$model" ] || { echo "pick-provider: no Sol model in cache" >&2; exit 2; } ;;
+  antigravity) model="gemini-3.8-flash" ;;
+esac
+jq -nc --arg p "$provider" --arg m "$model" '{provider: $p, model: $m, tier: "workhorse"}'
