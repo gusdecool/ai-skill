@@ -74,6 +74,20 @@ run_check $'## Goal\nX\n\n## Done when\nY\n\n## Open questions\nWhich database?\
 assert_eq "open questions with content fail" '["Open questions"]' "$(jq -c .missing <<<"$OUT")"
 assert_eq "open questions with content exit 1" "1" "$CODE"
 
+for placeholder in 'none' 'None.' 'N/A' 'n/a.' '-' '—' '<!-- nothing yet -->'; do
+  run_check $'## Goal\nX\n\n## Done when\nY\n\n## Open questions\n'"$placeholder"$'\n'
+  assert_eq "open questions placeholder '$placeholder' counts as empty" "0" "$CODE"
+done
+run_check $'## Goal\nX\n\n## Done when\nY\n\n## Open questions\nnone\nWhich database?\n'
+assert_eq "a placeholder next to a real question still fails" '["Open questions"]' "$(jq -c .missing <<<"$OUT")"
+
+run_check $'## Goal:\nX\n\n## Acceptance criteria:\nY\n'
+assert_eq "headings with a trailing colon pass" "0" "$CODE"
+run_check $'**Goal**\nX\n\n**Acceptance criteria**\nY\n'
+assert_eq "bold-only headings pass" "0" "$CODE"
+run_check $'**Goal:**\nX\n\n**Done when**\nY\n\n**Open questions**\nWhich database?\n'
+assert_eq "a bold Open questions heading with content fails" '["Open questions"]' "$(jq -c .missing <<<"$OUT")"
+
 run_check $'## Goal\nX\n\n## Done when\nY\n\n## Open questions\n\n'
 assert_eq "empty open questions pass" '{"ready":true,"missing":[]}' "$(jq -c . <<<"$OUT")"
 assert_eq "empty open questions exit 0" "0" "$CODE"
@@ -130,6 +144,9 @@ assert_eq "an unready card gets the HITL label" "1" \
   "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/12 --add-label HITL' "$STUB_DIR/calls.log")"
 assert_eq "an unready card moves to Backlog" "1" \
   "$(grep -c '^project item-edit .*--id I12 .*--single-select-option-id o-backlog' "$STUB_DIR/calls.log")"
+assert_eq "parking moves, then labels, then comments" "project item-edit issue edit issue comment" \
+  "$(grep -E '^(issue comment|issue edit|project item-edit) .*(I12|issues/12)' "$STUB_DIR/calls.log" \
+    | awk '{printf "%s%s %s", (NR > 1 ? " " : ""), $1, $2}')"
 
 reset_board
 jq '.items |= map(select(.id == "I13"))' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
@@ -148,6 +165,14 @@ make_unready 12
 touch "$STUB_DIR/gh-fail-issue-comment"
 run_pick
 assert_eq "a failing gh while parking exits 2" "2" "$CODE"
+
+reset_board
+make_unready 12
+touch "$STUB_DIR/gh-fail-project-item-edit"
+run_pick
+assert_eq "a failed move exits 2" "2" "$CODE"
+assert_eq "a failed move posts no comment" "0" \
+  "$(grep -c '^issue comment .*issues/12' "$STUB_DIR/calls.log" || true)"
 
 echo "Set status"
 reset_board
@@ -218,6 +243,10 @@ tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rate
   | .result.rateLimits.codex = .result.rateLimits.claude | .result.rateLimits.antigravity.status = "error"'
 OUT="$(run_provider "$STUB_DIR/accounts.json")"
 assert_eq "a tie goes to claude" "claude" "$(jq -r .provider <<<"$OUT")"
+
+tweak_accounts '.result.rateLimits.claude.session = null | .result.rateLimits.claude.weekly = null'
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+assert_eq "a provider with no windows is not eligible" "codex" "$(jq -r .provider <<<"$OUT")"
 
 echo "Pick next --dry-run"
 reset_board

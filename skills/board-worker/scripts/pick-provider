@@ -5,7 +5,9 @@
 # over a cutoff or unavailable. Exits 2 when quotas cannot be read.
 # Rules and numbers are copied from skills/load-balancer/SKILL.md: cutoffs 90 session / 95 weekly (80 / 75 for the
 # reserved provider, claude, which runs this skill); urgency = remaining / max(timeLeftFraction, 0.05) per window;
-# the highest window urgency is the score; scores within 5 percent tie and go to claude, then to the listed order.
+# the highest window urgency is the score (the load-balancer's "+5 session points per parallel task" rule is
+# omitted: this script starts one worker at a time); a provider with neither window is dropped; scores within 5
+# percent tie and go to claude, then to the listed order.
 # Env: ORCA_BIN (default orca), CODEX_MODELS_CACHE (default ~/.codex/models_cache.json), NOW_MS (clock, for tests).
 set -euo pipefail
 
@@ -28,6 +30,7 @@ result="$(jq -c --argjson now "$now_ms" '
   [.result.rateLimits | to_entries[] | select(.key | IN("claude", "codex", "antigravity"))
    | select(.value.status == "ok") | .key as $p | cutoffs($p) as $c
    | [{n: "session", w: .value.session}, {n: "weekly", w: .value.weekly}] | map(select(.w != null)) as $ws
+   | select(($ws | length) > 0)
    | ($ws | map(select(.w.usedPercent >= $c[.n]))) as $blocked
    | {provider: $p,
       freeAt: ($blocked | map(.w.resetsAt) | max),

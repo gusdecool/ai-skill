@@ -3,7 +3,7 @@
 # Usage: board-pick-next [--dry-run]
 # Prints {"repo","number","url","itemId"}; exits 0, or 1 when no card qualifies, 2 when the board cannot be read.
 # Order: Priority (High, Medium, Low, none), then current Iteration, then lowest issue number (oldest).
-# A Todo card that is not ready gets a comment naming what is missing, the HITL label, and moves to Backlog.
+# A Todo card that is not ready moves to Backlog, then gets the HITL label and a comment naming what is missing.
 # --dry-run only skips unready cards: it never comments, labels or moves anything.
 # TODAY (YYYY-MM-DD) overrides the date used to find the current iteration.
 set -euo pipefail
@@ -31,14 +31,15 @@ sorted_candidates() {
     | .[]' <<<"$1"
 }
 
-# Comments on, labels and moves a not-ready card to Backlog. Args: issue-url, check-output-json.
+# Moves a not-ready card to Backlog, then labels and comments on it. Args: issue-url, check-output-json.
+# The move comes first so a failed move cannot repeat the comment on every tick.
 park_card() {
   local missing
   missing="$(jq -r '.missing | join(", ")' <<<"$2")"
+  "$dir/board-set-status" "$1" Backlog || die "cannot park $1"
+  gh issue edit "$1" --add-label HITL >/dev/null || die "cannot park $1"
   gh issue comment "$1" --body "Not ready for the board worker. Missing: $missing. Moved back to Backlog." >/dev/null \
     || die "cannot park $1"
-  gh issue edit "$1" --add-label HITL >/dev/null || die "cannot park $1"
-  "$dir/board-set-status" "$1" Backlog || die "cannot park $1"
 }
 
 items="$(board_items)" || die "cannot list the board"
