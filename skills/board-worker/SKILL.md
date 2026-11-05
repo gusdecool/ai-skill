@@ -39,7 +39,8 @@ stop (see "Stopping").
 1. **Read.** Read the issue, the repo README (the `## UAT` section) and `AGENTS.md`/`CLAUDE.md`. If the issue has
    the label `HITL`, remove it: `gh issue edit <n> --remove-label HITL`.
 2. **Check the spec.** Run `board-check-ready <issue-url>`. If it fails, post an issue comment naming the missing
-   section(s) and stop. Also stop if a decision only the user can make is missing. Never ask and wait.
+   section(s) and stop (see Stopping). Also stop if a decision only the user can make is missing. Never ask and
+   wait.
 3. **Copy the spec.** Copy the issue text unchanged, with the issue link on the first line, into
    `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`. Do not brainstorm: the ready issue is the spec. Write a
    plan file in `docs/superpowers/plans/YYYY-MM-DD-<topic>.md` only when the work has more than one step; tick each
@@ -54,13 +55,20 @@ stop (see "Stopping").
    If high-risk: before merging, post an issue comment saying what is risky, the files and lines, and a link to the
    spec and plan in the PR. Add the label `HITL`: `gh issue edit <n> --add-label HITL`. Then continue to merge.
 6. **CI.** Run `gh pr checks <pr> --watch`. On failure, read the log (`gh run view <run-id> --log-failed`), fix on the
-   same branch, push, watch again. Never weaken a test, lint rule or coverage threshold. After 3 failed rounds, stop.
-7. **Merge.** Run `gh pr merge <pr> --squash`, then delete the remote head branch
+   same branch, push, watch again. Never weaken a test, lint rule or coverage threshold.
+   After 3 failed rounds, stop (see Stopping).
+   A repo with no CI checks counts as passing, but your final comment must say "no CI".
+7. **Merge.** Right before merging, re-check the owner with `gh repo view --json owner --jq .owner.login`: it must be
+   `gusdecool` or `bungamata`. Check that the PR targets the README's UAT branch; if it targets another branch, stop
+   (see Stopping). Run `gh pr merge <pr> --squash`, then delete the remote head branch
    (`git push origin --delete <branch>`) and check it is gone with `git ls-remote --heads origin <branch>`.
+   Get the merge commit with `gh pr view <pr> --json mergeCommit`. If the merge is blocked or conflicted (branch
+   protection, required review, conflict), never use `--admin`, never bypass branch protection, never force push:
+   stop (see Stopping); the PR stays open.
 8. **UAT.** Read the first line of the README `## UAT` section:
    - `UAT: <branch> | <deploy workflow file> | <url>`: watch the workflow run for the merge commit
      (`gh run list --workflow <file> --commit <sha>`, then `gh run watch <run-id> --exit-status`). If no run appears
-     within 5 minutes, or the run does not succeed within 20 minutes, stop with the failing log line.
+     within 5 minutes, or the run does not succeed within 20 minutes, stop (see Stopping) with the failing log line.
    - `UAT: none`: skip the watch. The final comment says "no UAT".
    - `UAT: unknown` or no section: skip the watch. The final comment says the repo has no known UAT, so QA does not
      mean "already on UAT".
@@ -70,8 +78,10 @@ stop (see "Stopping").
 
 ## Stopping
 
-Stop when: the spec is not ready, a question only the user can answer, 3 failed CI rounds, a failed or missing UAT
-deploy, or the 90-minute cap. Every stop does all of these:
+Stop when: the spec is not ready, a question only the user can answer, 3 failed CI rounds, merge blocked or
+conflicted, a PR aimed at a non-UAT branch, a failed or missing UAT deploy, the repo is not registered in Orca, or
+the 90-minute cap. The dispatcher owns the "repo not added to Orca" check and posts that comment; a worker that
+meets it makes the same stop with the comment "repo not added to Orca". Every stop does all of these:
 
 1. Post an issue comment with the reason (and the failing log line, if any).
 2. Add the label `HITL`.
