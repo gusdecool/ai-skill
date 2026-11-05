@@ -36,6 +36,7 @@ run_check() {
 }
 
 # Runs board_owner_allowed in a subshell so the sourced library stays isolated.
+# shellcheck disable=SC1090 # $LIB is a runtime path, not followable statically
 owner_ok() { (source "$LIB"; board_owner_allowed "$1"); }
 
 echo "Owner allow-list"
@@ -49,6 +50,7 @@ assert_eq "acme/x is rejected" "1" "$?"
 echo "Board items"
 echo '{"items":[]}' >"$STUB_DIR/gh-output"
 rm -f "$STUB_DIR/gh-args"
+# shellcheck disable=SC1090
 assert_eq "board_items prints the gh output" '{"items":[]}' "$(source "$LIB"; board_items)"
 assert_eq "board_items lists project 9 as JSON" \
   "project item-list 9 --owner bungamata --format json --limit 500" "$(cat "$STUB_DIR/gh-args")"
