@@ -134,6 +134,19 @@ jq '.items |= map(select(.id == "I13"))' "$FIX/items.json" >"$STUB_DIR/gh-projec
 run_pick
 assert_eq "no qualifying card exits 1" "1" "$CODE"
 
+reset_board
+jq '.items[2].iteration = "S3" | .items[1].iteration = {startDate: "2026-11-02"}' "$FIX/items.json" \
+  >"$STUB_DIR/gh-project-item-list"
+run_pick
+assert_eq "string or duration-less iteration does not crash" "0" "$CODE"
+assert_eq "malformed iterations sort as not current, by number" "11" "$(jq -r .number <<<"$OUT")"
+
+reset_board
+make_unready 12
+touch "$STUB_DIR/gh-fail-issue-comment"
+run_pick
+assert_eq "a failing gh while parking exits 2" "2" "$CODE"
+
 echo "Set status"
 reset_board
 bash "$SETSTATUS" https://github.com/gusdecool/x/issues/10 "In progress" 2>/dev/null

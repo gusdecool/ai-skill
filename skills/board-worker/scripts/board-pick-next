@@ -18,7 +18,8 @@ sorted_candidates() {
   jq -c --arg today "${TODAY:-$(date +%F)}" '
     def rank: {"High": 0, "Medium": 1, "Low": 2}[.priority // ""] // 3;
     def end_date: ((.startDate + "T00:00:00Z" | fromdate) + (.duration * 86400)) | todate | .[0:10];
-    def current: if .iteration and .iteration.startDate
+    def current: if (.iteration | type) == "object" and (.iteration.startDate | type) == "string"
+        and (.iteration.duration | type) == "number"
       then (.iteration.startDate <= $today and $today < (.iteration | end_date)) else false end;
     [.items[] | select(.status == "Todo" and .content.type == "Issue")
      | select(.content.repository | split("/")[0] | IN("gusdecool", "bungamata"))]
@@ -30,12 +31,14 @@ sorted_candidates() {
 park_card() {
   local missing
   missing="$(jq -r '.missing | join(", ")' <<<"$2")"
-  gh issue comment "$1" --body "Not ready for the board worker. Missing: $missing. Moved back to Backlog." >/dev/null
-  gh issue edit "$1" --add-label HITL >/dev/null
-  "$dir/board-set-status" "$1" Backlog
+  gh issue comment "$1" --body "Not ready for the board worker. Missing: $missing. Moved back to Backlog." >/dev/null \
+    || die "cannot park $1"
+  gh issue edit "$1" --add-label HITL >/dev/null || die "cannot park $1"
+  "$dir/board-set-status" "$1" Backlog || die "cannot park $1"
 }
 
 items="$(board_items)" || die "cannot list the board"
+candidates="$(sorted_candidates "$items")" || die "cannot sort the board items"
 while IFS= read -r card; do
   [ -n "$card" ] || continue
   url="$(jq -r '.content.url' <<<"$card")"
@@ -48,5 +51,5 @@ while IFS= read -r card; do
   else
     echo "board-pick-next: skipping $url, cannot read it" >&2
   fi
-done < <(sorted_candidates "$items")
+done <<<"$candidates"
 exit 1

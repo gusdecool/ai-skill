@@ -8,4 +8,9 @@ echo "$*" >>"$STUB_DIR/gh-args"
 echo "$*" >>"$STUB_DIR/calls.log"
 key="gh-${1:-}-${2:-}"
 [ "$key" != "gh-issue-view" ] || key="$key-$(basename "${3:-}")"
-if [ -f "$STUB_DIR/$key" ]; then cat "$STUB_DIR/$key"; elif [ -f "$STUB_DIR/gh-output" ]; then cat "$STUB_DIR/gh-output"; fi
+[ ! -f "$STUB_DIR/gh-fail-$1-$2" ] || exit 1
+if [ -f "$STUB_DIR/$key" ]; then
+  cat "$STUB_DIR/$key"
+elif [ -f "$STUB_DIR/gh-output" ]; then
+  cat "$STUB_DIR/gh-output"
+fi
