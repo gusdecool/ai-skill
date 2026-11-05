@@ -308,5 +308,81 @@ assert_eq "provider failure is named" "1" "$(grep -c 'provider' <<<"$ERR")"
 run_precheck pp-ok
 assert_eq "one In progress card, a Todo card and a provider exit 0" "0" "$CODE"
 
+precheck_board
+echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
+echo '{"updatedAt":"2026-11-06T08:00:00Z"}' >"$STUB_DIR/gh-issue-view-21"
+run_precheck
+assert_eq "both stale cards are reaped, so the precheck passes" "0" "$CODE"
+assert_eq "the status move happens before the comment" "1" \
+  "$([ "$(grep -n '^project item-edit .*--id I20' "$STUB_DIR/calls.log" | head -1 | cut -d: -f1)" -lt \
+    "$(grep -n '^issue comment .*issues/20' "$STUB_DIR/calls.log" | head -1 | cut -d: -f1)" ] && echo 1 || echo 0)"
+assert_eq "the PR lookup asks for 100 results, newest first" "1" \
+  "$(grep -c -E '^pr list .*--limit 100 --search #20 sort:updated-desc' "$STUB_DIR/calls.log")"
+
+precheck_board
+echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
+echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-21"
+touch "$STUB_DIR/gh-fail-issue-comment"
+run_precheck
+assert_eq "a failing reap exits 2" "2" "$CODE"
+assert_eq "a failing reap still tries the next card" "1" \
+  "$(grep -c '^project item-edit .*--id I21' "$STUB_DIR/calls.log")"
+assert_eq "a failing reap names the failed cards" "2" \
+  "$(grep -o 'issues/2[01]' <<<"$ERR" | sort -u | wc -l | tr -d ' ')"
+
+precheck_board
+echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
+touch "$STUB_DIR/gh-fail-issue-view"
+run_precheck
+assert_eq "unreadable activity counts as active" "1" "$CODE"
+assert_eq "unreadable activity never reaps" "0" "$(grep -c -E '^(issue (comment|edit)|project item-edit)' \
+  "$STUB_DIR/calls.log" || true)"
+
+precheck_board
+echo '{}' >"$STUB_DIR/gh-issue-view-20"
+echo '{}' >"$STUB_DIR/gh-issue-view-21"
+run_precheck
+assert_eq "a null updatedAt counts as active and is not reaped" "1" "$CODE"
+assert_eq "a null updatedAt never reaps" "0" "$(grep -c -E '^(issue (comment|edit)|project item-edit)' \
+  "$STUB_DIR/calls.log" || true)"
+
+precheck_board
+jq '.items |= map(select(.id != "I21")) | .items += [{"id":"I30","status":"In progress",
+  "content":{"type":"Issue","number":30,"repository":"acme/y","url":"https://github.com/acme/y/issues/30"}}]' \
+  "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
+cp "$STUB_DIR/items.tmp" "$STUB_DIR/gh-project-item-list"
+echo '{"updatedAt":"2026-11-06T01:00:00Z"}' >"$STUB_DIR/gh-issue-view-30"
+run_precheck
+assert_eq "a foreign-owner In progress card is counted" "1" "$CODE"
+assert_eq "a foreign-owner In progress card is never reaped" "0" "$(grep -c 'acme/y' "$STUB_DIR/calls.log" || true)"
+
+# Asserts the last precheck wrote exactly one stderr line. Arg: label.
+assert_one_line() { assert_eq "$1 prints exactly one stderr line" "1" "$(printf '%s\n' "$ERR" | grep -c .)"; }
+precheck_board
+run_precheck
+assert_one_line "limit reached"
+precheck_board
+jq '.items |= map(select(.status != "Todo" and .id != "I21"))' "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
+cp "$STUB_DIR/items.tmp" "$STUB_DIR/gh-project-item-list"
+run_precheck
+assert_one_line "no Todo card"
+precheck_board
+jq '.items |= map(select(.id != "I21"))' "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
+cp "$STUB_DIR/items.tmp" "$STUB_DIR/gh-project-item-list"
+run_precheck pp-fail
+assert_one_line "no provider"
+cat >"$STUB_DIR/pp-broken" <<'STUB'
+#!/usr/bin/env bash
+echo "boom" >&2
+exit 2
+STUB
+chmod +x "$STUB_DIR/pp-broken"
+run_precheck pp-broken
+assert_eq "an unreadable provider exits 2, not 1" "2" "$CODE"
+assert_one_line "unreadable provider"
+touch "$STUB_DIR/gh-fail-project-item-list"
+run_precheck
+assert_eq "an unreadable board exits 2" "2" "$CODE"
+
 if [ "$FAILS" -eq 0 ]; then echo "All board-worker tests passed"; fi
 exit "$FAILS"

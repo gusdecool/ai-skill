@@ -15,7 +15,7 @@ source "$dir/board-lib.sh"
 # Seconds of silence after which an In progress card counts as stale.
 STALE_SECONDS=7200
 
-# Prints an error and exits 2.
+# Prints an error and exits 2 (gh or script failure, as opposed to a plain skip).
 die() { echo "board-precheck: $*" >&2; exit 2; }
 
 # Prints one line naming the failed condition and exits 1.
@@ -27,27 +27,34 @@ in_progress_cards() {
 }
 
 # Prints "<last activity ISO time> <last PR url or none>" for an issue, taking the latest of the issue and its PRs.
+# Fails when the activity cannot be read, including an issue without an updatedAt.
 last_activity() {
   local issue prs
   issue="$(gh issue view "$1" --json updatedAt)" || return 1
-  prs="$(gh pr list --repo "$2" --state all --search "#$3" --json updatedAt,url)" || return 1
+  prs="$(gh pr list --repo "$2" --state all --limit 100 --search "#$3 sort:updated-desc" \
+    --json updatedAt,url)" || return 1
   jq -rn --argjson issue "$issue" --argjson prs "$prs" '
-    ($prs | sort_by(.updatedAt) | last) as $pr
+    if ($issue.updatedAt | type) != "string" then error("issue has no updatedAt") else . end
+    | ([$prs[] | select(.updatedAt | type == "string")] | sort_by(.updatedAt) | last) as $pr
     | [$issue.updatedAt, $pr.updatedAt // empty] | max as $latest
     | "\($latest) \($pr.url // "none")"'
 }
 
-# Moves a stale card to Backlog with the HITL label and a comment saying why. Args: url, last-time, last-pr.
+# Moves a stale card to Backlog, then labels HITL, then comments why. Args: url, last-time, last-pr.
+# The move comes first so a half-done reap still frees the slot; the comment last, as it bumps updatedAt.
+# Returns 1 with a message when a step fails.
 reap_card() {
+  "$dir/board-set-status" "$1" Backlog 2>/dev/null || { echo "cannot move $1 to Backlog" >&2; return 1; }
+  gh issue edit "$1" --add-label HITL >/dev/null || { echo "cannot label $1" >&2; return 1; }
   gh issue comment "$1" --body "No activity since $2 (no issue or PR update for 2 hours, the board worker rule), \
-so this card was moved back to Backlog with HITL. Last PR seen: $3." >/dev/null || die "cannot reap $1"
-  gh issue edit "$1" --add-label HITL >/dev/null || die "cannot reap $1"
-  "$dir/board-set-status" "$1" Backlog || die "cannot reap $1"
+so this card was moved back to Backlog with HITL. Last PR seen: $3." >/dev/null \
+    || { echo "cannot comment on $1" >&2; return 1; }
 }
 
 items="$(board_items)" || die "cannot list the board"
 now="${NOW_EPOCH:-$(date +%s)}"
 active=0
+failed=""
 while IFS= read -r card; do
   [ -n "$card" ] || continue
   url="$(jq -r '.content.url' <<<"$card")"
@@ -58,13 +65,22 @@ while IFS= read -r card; do
     last="${info%% *}"
     last_epoch="$(jq -rn --arg t "$last" '$t | fromdateiso8601')"
     if [ $((now - last_epoch)) -ge "$STALE_SECONDS" ]; then
-      reap_card "$url" "$last" "${info#* }"
-      continue
+      # A failed reap is remembered and reported at the end; the loop keeps going and the card still counts.
+      if reap_card "$url" "$last" "${info#* }"; then continue; fi
+      failed="$failed $url"
     fi
   fi
   active=$((active + 1))
 done < <(in_progress_cards "$items")
 
+[ -z "$failed" ] || die "could not reap:$failed"
 [ "$active" -lt 2 ] || fail "$active cards are In progress, the limit is 2"
-"$dir/board-pick-next" --dry-run >/dev/null || fail "no pick-able Todo card"
-"${PICK_PROVIDER:-$dir/pick-provider}" >/dev/null || fail "no provider has quota left"
+# Sub-script stderr is dropped so a skip prints exactly one line; exit 1 means "no", exit 2 means "cannot tell".
+code=0
+"$dir/board-pick-next" --dry-run >/dev/null 2>&1 || code=$?
+[ "$code" -ne 1 ] || fail "no pick-able Todo card"
+[ "$code" -eq 0 ] || die "cannot read the board for a Todo card"
+code=0
+"${PICK_PROVIDER:-$dir/pick-provider}" >/dev/null 2>&1 || code=$?
+[ "$code" -ne 1 ] || fail "no provider has quota left"
+[ "$code" -eq 0 ] || die "cannot read the provider quotas"
