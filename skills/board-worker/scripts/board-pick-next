@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Picks the next Todo card the worker should take.
+# Usage: board-pick-next
+# Prints {"repo","number","url","itemId"}; exits 0, or 1 when no card qualifies, 2 when the board cannot be read.
+# Order: Priority (High, Medium, Low, none), then current Iteration, then lowest issue number (oldest).
+# A Todo card that is not ready gets a comment naming what is missing, the HITL label, and moves to Backlog.
+# TODAY (YYYY-MM-DD) overrides the date used to find the current iteration.
+set -euo pipefail
+
+dir="$(dirname "${BASH_SOURCE[0]}")"
+source "$dir/board-lib.sh"
+
+# Prints an error and exits 2.
+die() { echo "board-pick-next: $*" >&2; exit 2; }
+
+# Prints the allowed Todo cards as JSON lines, best first.
+sorted_candidates() {
+  jq -c --arg today "${TODAY:-$(date +%F)}" '
+    def rank: {"High": 0, "Medium": 1, "Low": 2}[.priority // ""] // 3;
+    def end_date: ((.startDate + "T00:00:00Z" | fromdate) + (.duration * 86400)) | todate | .[0:10];
+    def current: if .iteration and .iteration.startDate
+      then (.iteration.startDate <= $today and $today < (.iteration | end_date)) else false end;
+    [.items[] | select(.status == "Todo" and .content.type == "Issue")
+     | select(.content.repository | split("/")[0] | IN("gusdecool", "bungamata"))]
+    | sort_by([rank, (if current then 0 else 1 end), .content.number])
+    | .[]' <<<"$1"
+}
+
+# Comments on, labels and moves a not-ready card to Backlog. Args: issue-url, check-output-json.
+park_card() {
+  local missing
+  missing="$(jq -r '.missing | join(", ")' <<<"$2")"
+  gh issue comment "$1" --body "Not ready for the board worker. Missing: $missing. Moved back to Backlog." >/dev/null
+  gh issue edit "$1" --add-label HITL >/dev/null
+  "$dir/board-set-status" "$1" Backlog
+}
+
+items="$(board_items)" || die "cannot list the board"
+while IFS= read -r card; do
+  [ -n "$card" ] || continue
+  url="$(jq -r '.content.url' <<<"$card")"
+  # Skip and handle cards whose issue is not ready; exit 2 from the check means unreadable, so leave it alone.
+  if check="$("$dir/board-check-ready" "$url")"; then
+    jq -c '{repo: .content.repository, number: .content.number, url: .content.url, itemId: .id}' <<<"$card"
+    exit 0
+  elif [ -n "$check" ]; then
+    park_card "$url" "$check"
+  else
+    echo "board-pick-next: skipping $url, cannot read it" >&2
+  fi
+done < <(sorted_candidates "$items")
+exit 1

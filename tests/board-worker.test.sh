@@ -5,6 +5,9 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LIB="$REPO/skills/board-worker/scripts/board-lib.sh"
 CHECK="$REPO/skills/board-worker/scripts/board-check-ready"
+PICK="$REPO/skills/board-worker/scripts/board-pick-next"
+SETSTATUS="$REPO/skills/board-worker/scripts/board-set-status"
+FIX="$REPO/tests/fixtures/board"
 export STUB_DIR
 STUB_DIR="$(mktemp -d)"
 export PATH="$REPO/tests/stubs:$PATH"
@@ -72,6 +75,78 @@ assert_eq "open questions with content exit 1" "1" "$CODE"
 run_check $'## Goal\nX\n\n## Done when\nY\n\n## Open questions\n\n'
 assert_eq "empty open questions pass" '{"ready":true,"missing":[]}' "$(jq -c . <<<"$OUT")"
 assert_eq "empty open questions exit 0" "0" "$CODE"
+
+# Resets the stub state and loads the board fixtures; every issue is ready unless a test says otherwise.
+reset_board() {
+  rm -f "$STUB_DIR"/gh-* "$STUB_DIR/calls.log"
+  cp "$FIX/items.json" "$STUB_DIR/gh-project-item-list"
+  cp "$FIX/fields.json" "$STUB_DIR/gh-project-field-list"
+  cp "$FIX/project.json" "$STUB_DIR/gh-project-view"
+  set_body $'## Goal\nX\n\n## Done when\nY\n'
+}
+
+# Makes the issue with the given number unready by giving it an empty body.
+make_unready() { echo '{"body":""}' >"$STUB_DIR/gh-issue-view-$1"; }
+
+# Runs board-pick-next with a fixed date, storing stdout in OUT and the exit code in CODE.
+run_pick() {
+  OUT="$(TODAY=2026-11-06 bash "$PICK" 2>/dev/null)"
+  CODE=$?
+}
+
+echo "Pick next"
+reset_board
+run_pick
+assert_eq "High priority in the current iteration wins" "12" "$(jq -r .number <<<"$OUT")"
+assert_eq "pick prints repo, url and item id" \
+  '{"repo":"gusdecool/x","number":12,"url":"https://github.com/gusdecool/x/issues/12","itemId":"I12"}' \
+  "$(jq -c . <<<"$OUT")"
+assert_eq "pick exits 0" "0" "$CODE"
+assert_eq "disallowed owner is never checked" "0" "$(grep -c 'acme/y' "$STUB_DIR/calls.log" || true)"
+
+reset_board
+jq 'del(.items[2])' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
+run_pick
+assert_eq "High in an older iteration beats a lower priority" "11" "$(jq -r .number <<<"$OUT")"
+
+reset_board
+jq '.items |= map(select(.id == "I10" or .id == "I14"))' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
+run_pick
+assert_eq "a card with a Priority beats one with none" "10" "$(jq -r .number <<<"$OUT")"
+jq '.items |= map(select(.id == "I14"))' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
+run_pick
+assert_eq "a card with no Priority is still picked" "14" "$(jq -r .number <<<"$OUT")"
+
+reset_board
+make_unready 12
+run_pick
+assert_eq "an unready card is skipped for the next one" "11" "$(jq -r .number <<<"$OUT")"
+assert_eq "an unready card gets a comment naming the gap" "1" \
+  "$(grep -c '^issue comment https://github.com/gusdecool/x/issues/12 --body .*Missing: Goal, Acceptance criteria' \
+    "$STUB_DIR/calls.log")"
+assert_eq "an unready card gets the HITL label" "1" \
+  "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/12 --add-label HITL' "$STUB_DIR/calls.log")"
+assert_eq "an unready card moves to Backlog" "1" \
+  "$(grep -c '^project item-edit .*--id I12 .*--single-select-option-id o-backlog' "$STUB_DIR/calls.log")"
+
+reset_board
+jq '.items |= map(select(.id == "I13"))' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
+run_pick
+assert_eq "no qualifying card exits 1" "1" "$CODE"
+
+echo "Set status"
+reset_board
+bash "$SETSTATUS" https://github.com/gusdecool/x/issues/10 "In progress" 2>/dev/null
+assert_eq "set-status exits 0" "0" "$?"
+assert_eq "set-status sends the project, card, field and option IDs" \
+  "project item-edit --project-id PROJ9 --id I10 --field-id FS --single-select-option-id o-prog" \
+  "$(grep '^project item-edit' "$STUB_DIR/calls.log")"
+reset_board
+bash "$SETSTATUS" https://github.com/gusdecool/x/issues/10 Doing 2>/dev/null
+assert_eq "set-status rejects an unknown status with 2" "2" "$?"
+assert_eq "set-status does not edit on an unknown status" "0" "$(grep -c '^project item-edit' "$STUB_DIR/calls.log")"
+bash "$SETSTATUS" https://github.com/gusdecool/x/issues/999 Done 2>/dev/null
+assert_eq "set-status rejects an unknown card with 2" "2" "$?"
 
 if [ "$FAILS" -eq 0 ]; then echo "All board-worker tests passed"; fi
 exit "$FAILS"

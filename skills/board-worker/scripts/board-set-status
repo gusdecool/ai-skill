@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Moves an issue's card on the BM board to a Status column.
+# Usage: board-set-status <issue-url> <status>   (Backlog, Todo, In progress, QA or Done)
+# Exits 0 on success, 2 on a bad status, an unknown card or any gh failure.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
+
+# Prints an error and exits 2.
+die() { echo "board-set-status: $*" >&2; exit 2; }
+
+[ "$#" -eq 2 ] || die "usage: board-set-status <issue-url> <status>"
+url="$1"
+status="$2"
+
+# Reads the Status field and its option IDs from the board.
+fields="$(gh project field-list "$BOARD_PROJECT" --owner "$BOARD_OWNER" --format json)" || die "cannot read fields"
+field_id="$(jq -r '.fields[] | select(.name == "Status") | .id' <<<"$fields")"
+option_id="$(jq -r --arg s "$status" \
+  '.fields[] | select(.name == "Status") | .options[] | select(.name == $s) | .id' <<<"$fields")"
+[ -n "$field_id" ] || die "the board has no Status field"
+[ -n "$option_id" ] || die "unknown status '$status'"
+
+# Finds the card of this issue on the board.
+items="$(board_items)" || die "cannot list the board"
+item_id="$(jq -r --arg u "$url" '.items[] | select(.content.url == $u) | .id' <<<"$items" | head -n 1)"
+[ -n "$item_id" ] || die "no card for $url"
+
+project_id="$(gh project view "$BOARD_PROJECT" --owner "$BOARD_OWNER" --format json | jq -r '.id')" \
+  || die "cannot read the project"
+gh project item-edit --project-id "$project_id" --id "$item_id" --field-id "$field_id" \
+  --single-select-option-id "$option_id" >/dev/null || die "cannot update the card"

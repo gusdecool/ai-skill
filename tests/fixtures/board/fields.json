@@ -1,0 +1,6 @@
+{"fields":[
+ {"id":"F0","name":"Title","type":"ProjectV2Field"},
+ {"id":"FS","name":"Status","type":"ProjectV2SingleSelectField","options":[
+  {"id":"o-backlog","name":"Backlog"},{"id":"o-todo","name":"Todo"},{"id":"o-prog","name":"In progress"},
+  {"id":"o-qa","name":"QA"},{"id":"o-done","name":"Done"}]}
+]}
