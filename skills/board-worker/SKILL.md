@@ -59,10 +59,10 @@ stop (see "Stopping").
    After 3 failed rounds, stop (see Stopping).
    A repo with no CI checks counts as passing, but your final comment must say "no CI".
 7. **Merge.** Right before merging, re-check the owner with `gh repo view --json owner --jq .owner.login`: it must be
-   `gusdecool` or `bungamata`. Check that the PR targets the README's UAT branch; if it targets another branch, stop
-   (see Stopping). Run `gh pr merge <pr> --squash`, then delete the remote head branch
+   `gusdecool` or `bungamata`. If the UAT line names a branch and the PR targets another branch, stop
+   (see Stopping). With none, unknown or no section, skip this check. Run `gh pr merge <pr> --squash`, then delete the remote head branch
    (`git push origin --delete <branch>`) and check it is gone with `git ls-remote --heads origin <branch>`.
-   Get the merge commit with `gh pr view <pr> --json mergeCommit`. If the merge is blocked or conflicted (branch
+   Get the merge commit with `gh pr view <pr> --json mergeCommit --jq .mergeCommit.oid`. If the merge is blocked or conflicted (branch
    protection, required review, conflict), never use `--admin`, never bypass branch protection, never force push:
    stop (see Stopping); the PR stays open.
 8. **UAT.** Read the first line of the README `## UAT` section:
@@ -79,7 +79,7 @@ stop (see "Stopping").
 ## Stopping
 
 Stop when: the spec is not ready, a question only the user can answer, 3 failed CI rounds, merge blocked or
-conflicted, a PR aimed at a non-UAT branch, a failed or missing UAT deploy, the repo is not registered in Orca, or
+conflicted, a PR aimed at a branch other than the named UAT branch, a failed or missing UAT deploy, the repo is not registered in Orca, or
 the 90-minute cap. The dispatcher owns the "repo not added to Orca" check and posts that comment; a worker that
 meets it makes the same stop with the comment "repo not added to Orca". Every stop does all of these:
 
