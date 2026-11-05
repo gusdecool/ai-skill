@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Checks that an issue body has the sections the board worker needs before it starts work.
+# Usage: board-check-ready <issue-url>
+# Prints {"ready":bool,"missing":[...]}; exits 0 when ready, 1 when not, 2 when the issue cannot be read.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
+
+# Prints an error and exits 2.
+die() { echo "board-check-ready: $*" >&2; exit 2; }
+
+# Exits 0 when the issue body has a markdown heading matching the case-insensitive pattern.
+has_heading() { grep -qiE "^#{1,6}[[:space:]]+($1)[[:space:]]*\$" <<<"$text"; }
+
+# Prints the non-blank lines under the Open questions heading.
+open_questions() {
+  awk '
+    { line = tolower($0) }
+    line ~ /^#+[ \t]+open questions[ \t]*$/ { inside = 1; next }
+    line ~ /^#+[ \t]/ { inside = 0 }
+    inside && NF { print }
+  ' <<<"$text"
+}
+
+[ "$#" -eq 1 ] || die "usage: board-check-ready <issue-url>"
+url="$1"
+
+# Reads the issue body and drops CR characters so CRLF bodies match the same patterns.
+json="$(gh issue view "$url" --json body)" || die "cannot read $url"
+text="$(jq -r '.body // ""' <<<"$json" | tr -d '\r')" || die "cannot parse the body of $url"
+
+missing=()
+# A Goal section is required.
+has_heading "goal" || missing+=("Goal")
+# One acceptance section is required.
+has_heading "acceptance criteria|expected behavior|done when" || missing+=("Acceptance criteria")
+# Open questions must have no answers pending.
+[ -z "$(open_questions)" ] || missing+=("Open questions")
+
+ready=true
+[ "${#missing[@]}" -eq 0 ] || ready=false
+printf '%s\n' "${missing[@]+"${missing[@]}"}" | jq -R -s -c --argjson ready "$ready" \
+  'split("\n") | map(select(length > 0)) | {ready: $ready, missing: .}'
+[ "$ready" = true ]

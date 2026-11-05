@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Test stub for gh: logs its arguments to $STUB_DIR/gh-args and prints the file $STUB_DIR/gh-output.
+set -uo pipefail
+
+echo "$*" >>"$STUB_DIR/gh-args"
+cat "$STUB_DIR/gh-output"
