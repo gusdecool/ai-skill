@@ -7,11 +7,13 @@ that read the shared skills folder.
 
 | Skill | Use case | Details |
 |---|---|---|
+| `/gusdecool:board-worker` | Work one board ticket end to end: PR, CI, merge, UAT watch, card to QA | [SKILL.md][board-worker] |
 | `/gusdecool:load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][load-balancer] |
 | `/gusdecool:mysql-branch` | MySQL branching: one database per git branch / worktree | [SKILL.md][mysql-branch] |
 
 In Claude Code the skill is `/gusdecool:<name>`. In other agents, say its name, for example "use MySQL branch".
 
+[board-worker]: skills/board-worker/SKILL.md
 [load-balancer]: skills/load-balancer/SKILL.md
 [mysql-branch]: skills/mysql-branch/SKILL.md
 
@@ -142,3 +144,32 @@ CI runs the same checks plus `shellcheck`.
 ## License
 
 [MIT](LICENSE). Keep the copyright notice when you copy or modify the code.
+
+## UAT section convention
+
+The `board-worker` skill reads each repo's README to learn how its UAT works. Add a `## UAT` section whose first line
+is one of these forms:
+
+```
+## UAT
+
+UAT: <branch> | <deploy workflow file> | <url>
+```
+
+`<branch>` is the branch the PR targets, so merging it triggers the deploy (a repo that promotes `main` to a `uat`
+branch writes `main`). `<deploy workflow file>` is the workflow under `.github/workflows/` that deploys it.
+
+```
+## UAT
+
+UAT: none
+```
+
+For a repo with no UAT server. If the section is missing, the worker treats the repo as having no UAT and its PR adds:
+
+```
+## UAT
+
+UAT: unknown
+Please fill in this section: replace the line above with the UAT line for this repo.
+```
