@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Decides whether the board worker should start a new worker now.
+# Usage: board-precheck
+# Exits 0 only when a pick-able Todo card exists, fewer than 2 cards are In progress (after reaping stale ones) and
+# pick-provider exits 0. Otherwise exits 1 with one line on stderr naming the failed condition; 2 on gh failure.
+# Reaper: an In progress card whose issue and linked PRs show no activity for 2 hours gets the HITL label, moves to
+# Backlog and gets a comment with the last activity time, the 2-hour rule and the last PR seen.
+# Activity is read per card: `gh issue view --json updatedAt` and `gh pr list --search "#<n>"` (PRs that mention it).
+# Env: PICK_PROVIDER (path of pick-provider), NOW_EPOCH (clock in seconds, for tests), TODAY (passed to pick-next).
+set -euo pipefail
+
+dir="$(dirname "${BASH_SOURCE[0]}")"
+source "$dir/board-lib.sh"
+
+# Seconds of silence after which an In progress card counts as stale.
+STALE_SECONDS=7200
+
+# Prints an error and exits 2.
+die() { echo "board-precheck: $*" >&2; exit 2; }
+
+# Prints one line naming the failed condition and exits 1.
+fail() { echo "board-precheck: $*" >&2; exit 1; }
+
+# Prints the In progress issue cards as JSON lines.
+in_progress_cards() {
+  jq -c '.items[] | select(.status == "In progress" and .content.type == "Issue")' <<<"$1"
+}
+
+# Prints "<last activity ISO time> <last PR url or none>" for an issue, taking the latest of the issue and its PRs.
+last_activity() {
+  local issue prs
+  issue="$(gh issue view "$1" --json updatedAt)" || return 1
+  prs="$(gh pr list --repo "$2" --state all --search "#$3" --json updatedAt,url)" || return 1
+  jq -rn --argjson issue "$issue" --argjson prs "$prs" '
+    ($prs | sort_by(.updatedAt) | last) as $pr
+    | [$issue.updatedAt, $pr.updatedAt // empty] | max as $latest
+    | "\($latest) \($pr.url // "none")"'
+}
+
+# Moves a stale card to Backlog with the HITL label and a comment saying why. Args: url, last-time, last-pr.
+reap_card() {
+  gh issue comment "$1" --body "No activity since $2 (no issue or PR update for 2 hours, the board worker rule), \
+so this card was moved back to Backlog with HITL. Last PR seen: $3." >/dev/null || die "cannot reap $1"
+  gh issue edit "$1" --add-label HITL >/dev/null || die "cannot reap $1"
+  "$dir/board-set-status" "$1" Backlog || die "cannot reap $1"
+}
+
+items="$(board_items)" || die "cannot list the board"
+now="${NOW_EPOCH:-$(date +%s)}"
+active=0
+while IFS= read -r card; do
+  [ -n "$card" ] || continue
+  url="$(jq -r '.content.url' <<<"$card")"
+  repo="$(jq -r '.content.repository' <<<"$card")"
+  number="$(jq -r '.content.number' <<<"$card")"
+  # A card whose activity cannot be read, or of a foreign owner, counts as active and is never reaped.
+  if board_owner_allowed "$repo" && info="$(last_activity "$url" "$repo" "$number")"; then
+    last="${info%% *}"
+    last_epoch="$(jq -rn --arg t "$last" '$t | fromdateiso8601')"
+    if [ $((now - last_epoch)) -ge "$STALE_SECONDS" ]; then
+      reap_card "$url" "$last" "${info#* }"
+      continue
+    fi
+  fi
+  active=$((active + 1))
+done < <(in_progress_cards "$items")
+
+[ "$active" -lt 2 ] || fail "$active cards are In progress, the limit is 2"
+"$dir/board-pick-next" --dry-run >/dev/null || fail "no pick-able Todo card"
+"${PICK_PROVIDER:-$dir/pick-provider}" >/dev/null || fail "no provider has quota left"

@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Picks the next Todo card the worker should take.
-# Usage: board-pick-next
+# Usage: board-pick-next [--dry-run]
 # Prints {"repo","number","url","itemId"}; exits 0, or 1 when no card qualifies, 2 when the board cannot be read.
 # Order: Priority (High, Medium, Low, none), then current Iteration, then lowest issue number (oldest).
 # A Todo card that is not ready gets a comment naming what is missing, the HITL label, and moves to Backlog.
+# --dry-run only skips unready cards: it never comments, labels or moves anything.
 # TODAY (YYYY-MM-DD) overrides the date used to find the current iteration.
 set -euo pipefail
+
+dry_run=0
+[ "${1:-}" != "--dry-run" ] || dry_run=1
 
 dir="$(dirname "${BASH_SOURCE[0]}")"
 source "$dir/board-lib.sh"
@@ -46,6 +50,8 @@ while IFS= read -r card; do
   if check="$("$dir/board-check-ready" "$url")"; then
     jq -c '{repo: .content.repository, number: .content.number, url: .content.url, itemId: .id}' <<<"$card"
     exit 0
+  elif [ -n "$check" ] && [ "$dry_run" -eq 1 ]; then
+    continue
   elif [ -n "$check" ]; then
     park_card "$url" "$check"
   else

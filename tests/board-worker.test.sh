@@ -8,6 +8,7 @@ CHECK="$REPO/skills/board-worker/scripts/board-check-ready"
 PICK="$REPO/skills/board-worker/scripts/board-pick-next"
 SETSTATUS="$REPO/skills/board-worker/scripts/board-set-status"
 PICKPROV="$REPO/skills/board-worker/scripts/pick-provider"
+PRECHECK="$REPO/skills/board-worker/scripts/board-precheck"
 FIX="$REPO/tests/fixtures/board"
 export STUB_DIR
 STUB_DIR="$(mktemp -d)"
@@ -217,6 +218,95 @@ tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rate
   | .result.rateLimits.codex = .result.rateLimits.claude | .result.rateLimits.antigravity.status = "error"'
 OUT="$(run_provider "$STUB_DIR/accounts.json")"
 assert_eq "a tie goes to claude" "claude" "$(jq -r .provider <<<"$OUT")"
+
+echo "Pick next --dry-run"
+reset_board
+make_unready 12
+OUT="$(TODAY=2026-11-06 bash "$PICK" --dry-run 2>/dev/null)"
+CODE=$?
+assert_eq "dry-run still picks the next ready card" "11" "$(jq -r .number <<<"$OUT")"
+assert_eq "dry-run exits 0" "0" "$CODE"
+assert_eq "dry-run never comments, labels or moves" "0" \
+  "$(grep -c -E '^(issue comment|issue edit|project item-edit)' "$STUB_DIR/calls.log" || true)"
+
+echo "Precheck"
+NOW_ISO=2026-11-06T12:00:00Z
+NOW_EPOCH="$(date -j -u -f %Y-%m-%dT%H:%M:%SZ "$NOW_ISO" +%s 2>/dev/null || date -u -d "$NOW_ISO" +%s)"
+cat >"$STUB_DIR/pp-ok" <<'STUB'
+#!/usr/bin/env bash
+echo '{"provider":"claude","model":"m","tier":"workhorse"}'
+STUB
+cat >"$STUB_DIR/pp-fail" <<'STUB'
+#!/usr/bin/env bash
+echo '{"error":"all providers over cutoff"}'
+exit 1
+STUB
+chmod +x "$STUB_DIR/pp-ok" "$STUB_DIR/pp-fail"
+
+# Loads the board with In progress cards 20 and 21 on top of the Todo fixtures.
+precheck_board() {
+  reset_board
+  jq '.items += [
+    {"id":"I20","status":"In progress","content":{"type":"Issue","number":20,"repository":"gusdecool/x",
+      "url":"https://github.com/gusdecool/x/issues/20"}},
+    {"id":"I21","status":"In progress","content":{"type":"Issue","number":21,"repository":"gusdecool/x",
+      "url":"https://github.com/gusdecool/x/issues/21"}}]' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
+  echo '{"updatedAt":"2026-11-06T11:30:00Z"}' >"$STUB_DIR/gh-issue-view-20"
+  echo '{"updatedAt":"2026-11-06T11:00:00Z"}' >"$STUB_DIR/gh-issue-view-21"
+  echo '[]' >"$STUB_DIR/gh-pr-list"
+}
+# Runs board-precheck with a fixed clock and a provider stub, storing the exit code in CODE and stderr in ERR.
+run_precheck() {
+  ERR="$(TODAY=2026-11-06 NOW_EPOCH="$NOW_EPOCH" PICK_PROVIDER="$STUB_DIR/${1:-pp-ok}" \
+    bash "$PRECHECK" 2>&1 >/dev/null)"
+  CODE=$?
+}
+
+precheck_board
+run_precheck
+assert_eq "two active In progress cards exit 1" "1" "$CODE"
+assert_eq "the failed condition is named on one line" "1" "$(wc -l <<<"$ERR" | tr -d ' ')"
+assert_eq "the line names the In progress limit" "1" "$(grep -c 'In progress' <<<"$ERR")"
+assert_eq "active cards are not reaped" "0" "$(grep -c -E '^(issue comment|issue edit)' "$STUB_DIR/calls.log" || true)"
+
+precheck_board
+echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
+echo '[{"updatedAt":"2026-11-06T08:00:00Z","url":"https://github.com/gusdecool/x/pull/99"}]' >"$STUB_DIR/gh-pr-list"
+run_precheck
+assert_eq "a 3-hour-stale card is reaped and frees a slot" "0" "$CODE"
+assert_eq "the stale card gets a comment with the 2-hour rule, last activity and last PR" "1" \
+  "$(grep -c -E 'issues/20 --body .*2026-11-06T09:00:00Z.*2 hours.*pull/99' "$STUB_DIR/calls.log")"
+assert_eq "the stale card gets the HITL label" "1" \
+  "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/20 --add-label HITL' "$STUB_DIR/calls.log")"
+assert_eq "the stale card moves to Backlog" "1" \
+  "$(grep -c '^project item-edit .*--id I20 .*--single-select-option-id o-backlog' "$STUB_DIR/calls.log")"
+assert_eq "the active card is left alone" "0" \
+  "$(grep -c -E '^issue (comment|edit) .*issues/21' "$STUB_DIR/calls.log" || true)"
+assert_eq "the precheck never parks Todo cards" "0" \
+  "$(grep -c -E '^issue (comment|edit) .*issues/1[0-4]' "$STUB_DIR/calls.log" || true)"
+
+precheck_board
+echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
+echo '[{"updatedAt":"2026-11-06T11:45:00Z","url":"https://github.com/gusdecool/x/pull/98"}]' >"$STUB_DIR/gh-pr-list"
+run_precheck
+assert_eq "recent PR activity keeps a card with a stale issue" "1" "$CODE"
+assert_eq "a card with recent PR activity is not reaped" "0" "$(grep -c '^issue comment' "$STUB_DIR/calls.log" || true)"
+
+precheck_board
+jq '.items |= map(select(.status != "Todo"))' "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
+jq '.items |= map(select(.id != "I21"))' "$STUB_DIR/items.tmp" >"$STUB_DIR/gh-project-item-list"
+run_precheck
+assert_eq "no Todo card exits 1" "1" "$CODE"
+assert_eq "no Todo card is named" "1" "$(grep -c 'Todo' <<<"$ERR")"
+
+precheck_board
+jq '.items |= map(select(.id != "I21"))' "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
+cp "$STUB_DIR/items.tmp" "$STUB_DIR/gh-project-item-list"
+run_precheck pp-fail
+assert_eq "provider failure exits 1" "1" "$CODE"
+assert_eq "provider failure is named" "1" "$(grep -c 'provider' <<<"$ERR")"
+run_precheck pp-ok
+assert_eq "one In progress card, a Todo card and a provider exit 0" "0" "$CODE"
 
 if [ "$FAILS" -eq 0 ]; then echo "All board-worker tests passed"; fi
 exit "$FAILS"
