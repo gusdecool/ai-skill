@@ -7,7 +7,7 @@ that read the shared skills folder.
 
 | Skill | Use case | Details |
 |---|---|---|
-| `/gusdecool:board-worker` | Work one board ticket end to end: PR, CI, merge, UAT watch, card to QA | [SKILL.md][board-worker] |
+| `/gusdecool:board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][board-worker] |
 | `/gusdecool:load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][load-balancer] |
 | `/gusdecool:mysql-branch` | MySQL branching: one database per git branch / worktree | [SKILL.md][mysql-branch] |
 
