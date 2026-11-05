@@ -46,6 +46,8 @@ UAT: unknown
 Please fill in this section: replace the line above with the UAT line for this repo.
 ```
 
+The board scripts read at most 500 items from the project board (a known limit).
+
 ## Install
 
 You need Docker (for the MySQL your apps use) and git. Pick one way.

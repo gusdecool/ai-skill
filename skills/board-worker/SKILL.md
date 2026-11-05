@@ -37,9 +37,12 @@ stop (see "Stopping").
 ## Steps
 
 1. **Read.** Read the issue, the repo README (the `## UAT` section) and `AGENTS.md`/`CLAUDE.md`. If the issue has
-   the label `HITL`, remove it: `gh issue edit <n> --remove-label HITL`.
-2. **Check the spec.** Run `board-check-ready <issue-url>`. If it fails, post an issue comment naming the missing
-   section(s) and stop (see Stopping). Also stop if a decision only the user can make is missing. Never ask and
+   the label `HITL`, remove it: `gh issue edit <n> --remove-label HITL`. Then immediately post an issue comment
+   "Board worker started <ISO time>" (`gh issue comment <n> --body ...`). This touches the issue, which resets the
+   dispatcher's 2-hour stale clock; changing the card status alone does not.
+2. **Check the spec.** Run `board-check-ready <issue-url>`. If it exits 1, post an issue comment naming the missing
+   section(s) and stop (see Stopping). If it exits 2 (the issue cannot be read), retry once, then stop (see
+   Stopping). Also stop if a decision only the user can make is missing. Never ask and
    wait.
 3. **Copy the spec.** Copy the issue text unchanged, with the issue link on the first line, into
    `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`. Do not brainstorm: the ready issue is the spec. Write a
@@ -58,7 +61,11 @@ stop (see "Stopping").
    same branch, push, watch again. Never weaken a test, lint rule or coverage threshold.
    After 3 failed rounds, stop (see Stopping).
    A repo with no CI checks counts as passing, but your final comment must say "no CI".
-7. **Merge.** Right before merging, re-check the owner with `gh repo view --json owner --jq .owner.login`: it must be
+7. **Merge.** First re-check that the card is still In progress: run
+   `gh project item-list 9 --owner bungamata --format json --limit 500` and read the status of the item whose
+   content URL is the issue URL. If it is no longer In progress, the dispatcher reaped the card because the worker
+   looked cut off: stop (see Stopping) and do not merge. Then, right before merging, re-check the owner with
+   `gh repo view --json owner --jq .owner.login`: it must be
    `gusdecool` or `bungamata`. If the UAT line names a branch and the PR targets another branch, stop
    (see Stopping). With none, unknown or no section, skip this check. Run `gh pr merge <pr> --squash`, then delete
    the remote head branch (`git push origin --delete <branch>`) and check it is gone with
