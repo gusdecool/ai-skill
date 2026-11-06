@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# The single deterministic check before a board worker may merge its PR.
+# Usage: board-merge-gate <issue-url> <pr-number>
+# Prints {"allowed":bool,"blocked":["reason",...]}; exits 0 only when every check passes, 1 when any blocks the merge,
+# 2 when something cannot be read (treat as blocked). Checks, all by script so issue text cannot talk past them:
+#   1. the repo owner is in BOARD_ALLOWED_OWNERS         2. the repo visibility is not in BOARD_BLOCKED_VISIBILITIES
+#   3. the issue says "Auto merge: true", written by an owner, member or collaborator (board-check-merge-approved)
+#   4. the PR changes no CI/CD file (always a human), and no infra file unless BOARD_ALLOW_INFRA_CHANGE=true
+set -euo pipefail
+
+dir="$(dirname "${BASH_SOURCE[0]}")"
+source "$dir/board-lib.sh"
+
+# Prints an error and exits 2.
+die() { echo "board-merge-gate: $*" >&2; exit 2; }
+
+[ "$#" -eq 2 ] || die "usage: board-merge-gate <issue-url> <pr-number>"
+url="$1" pr="$2"
+[[ "$url" =~ ^https://github\.com/([^/]+/[^/]+)/issues/[0-9]+$ ]] || die "not an issue URL: $url"
+repo="${BASH_REMATCH[1]}"
+
+blocked=()
+# 1. Owner allow-list.
+board_owner_allowed "$repo" || blocked+=("repo owner is not in the allowed owners")
+# 2. Visibility; an unreadable one blocks too.
+rc=0; board_visibility_blocked "$repo" || rc=$?
+case "$rc" in
+  0) blocked+=("repo visibility is blocked by the board-worker config") ;;
+  1) ;;
+  *) blocked+=("repo visibility could not be read") ;;
+esac
+# 3. Written human approval.
+rc=0; approval="$("$dir/board-check-merge-approved" "$url")" || rc=$?
+[ "$rc" -eq 0 ] || blocked+=("$(jq -r '.reason // "approval could not be read"' <<<"${approval:-{\}}")")
+# 4. CI/CD and infra changes.
+rc=0; diff_json="$("$dir/board-check-diff" "$pr" "$repo")" || rc=$?
+if [ "$rc" -eq 2 ]; then
+  blocked+=("the PR file list could not be read")
+else
+  [ "$(jq -r .cicd <<<"$diff_json")" != true ] ||
+    blocked+=("the PR changes CI/CD files, which always need a human: $(jq -r '.paths | join(", ")' <<<"$diff_json")")
+  if [ "$(jq -r .infra <<<"$diff_json")" = true ] && [ "$BOARD_ALLOW_INFRA_CHANGE" != true ]; then
+    blocked+=("the PR changes infrastructure files and BOARD_ALLOW_INFRA_CHANGE is not true")
+  fi
+fi
+
+allowed=true
+[ "${#blocked[@]}" -eq 0 ] || allowed=false
+printf '%s\n' "${blocked[@]+"${blocked[@]}"}" | jq -R -s -c --argjson allowed "$allowed" \
+  'split("\n") | map(select(length > 0)) | {allowed: $allowed, blocked: .}'
+[ "$allowed" = true ]

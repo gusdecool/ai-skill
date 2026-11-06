@@ -31,15 +31,12 @@ sorted_candidates() {
     | .[]' <<<"$1"
 }
 
-# Moves a not-ready card to Backlog, then labels and comments on it. Args: issue-url, check-output-json.
+# Moves a card the worker will not take to Backlog, then labels and comments on it. Args: issue-url, reason.
 # The move comes first so a failed move cannot repeat the comment on every tick.
 park_card() {
-  local missing
-  missing="$(jq -r '.missing | join(", ")' <<<"$2")"
   "$dir/board-set-status" "$1" Backlog || die "cannot park $1"
   gh issue edit "$1" --add-label HITL >/dev/null || die "cannot park $1"
-  gh issue comment "$1" --body "Not ready for the board worker. Missing: $missing. Moved back to Backlog." >/dev/null \
-    || die "cannot park $1"
+  gh issue comment "$1" --body "$2 Moved back to Backlog." >/dev/null || die "cannot park $1"
 }
 
 items="$(board_items)" || die "cannot list the board"
@@ -47,6 +44,17 @@ candidates="$(sorted_candidates "$items")" || die "cannot sort the board items"
 while IFS= read -r card; do
   [ -n "$card" ] || continue
   url="$(jq -r '.content.url' <<<"$card")"
+  # Skip cards in a repo whose visibility the config blocks (checked by script before any worker exists).
+  # An unreadable visibility is left alone: fail closed.
+  vrc=0; board_visibility_blocked "$(jq -r '.content.repository' <<<"$card")" || vrc=$?
+  if [ "$vrc" -eq 0 ]; then
+    [ "$dry_run" -eq 1 ] || park_card "$url" \
+      "Ignored by the board worker: this repo's visibility is blocked by your board-worker config."
+    continue
+  elif [ "$vrc" -ne 1 ]; then
+    echo "board-pick-next: skipping $url, cannot read the repo visibility" >&2
+    continue
+  fi
   # Skip and handle cards whose issue is not ready; exit 2 from the check means unreadable, so leave it alone.
   if check="$("$dir/board-check-ready" "$url")"; then
     jq -c '{repo: .content.repository, number: .content.number, url: .content.url, itemId: .id}' <<<"$card"
@@ -54,7 +62,7 @@ while IFS= read -r card; do
   elif [ -n "$check" ] && [ "$dry_run" -eq 1 ]; then
     continue
   elif [ -n "$check" ]; then
-    park_card "$url" "$check"
+    park_card "$url" "Not ready for the board worker. Missing: $(jq -r '.missing | join(", ")' <<<"$check")."
   else
     echo "board-pick-next: skipping $url, cannot read it" >&2
   fi

@@ -11,6 +11,8 @@ PICKPROV="$REPO/skills/board-worker/scripts/pick-provider"
 PRECHECK="$REPO/skills/board-worker/scripts/board-precheck"
 FIX="$REPO/tests/fixtures/board"
 export BOARD_WORKER_CONFIG="$FIX/config"
+GATE="$REPO/skills/board-worker/scripts/board-merge-gate"
+DIFF="$REPO/skills/board-worker/scripts/board-check-diff"
 APPROVE="$REPO/skills/board-worker/scripts/board-check-merge-approved"
 SETUP="$REPO/skills/board-worker/scripts/board-setup"
 export STUB_DIR
@@ -88,6 +90,33 @@ assert_eq "a contributor is not enough" "1" "$RC"
 bash "$APPROVE" not-a-url 2>/dev/null
 assert_eq "bad URL exits 2" "2" "$?"
 
+echo "Flags"
+CF="$(mktemp -d)"
+# Prints the loaded visibility and infra flags for the config file given as $1.
+flag_of() {
+  BOARD_WORKER_CONFIG="$1" bash -c 'source "$1"; echo "[$BOARD_BLOCKED_VISIBILITIES] $BOARD_ALLOW_INFRA_CHANGE"' \
+    _ "$LIB"
+}
+assert_eq "absent flags default to blocking public, no infra" "[public] false" "$(flag_of "$FIX/config")"
+printf 'BOARD_OWNER=a\nBOARD_PROJECT=1\nBOARD_ALLOWED_OWNERS=a\nBOARD_BLOCKED_VISIBILITIES=\n' \
+  >"$CF/set"
+printf 'BOARD_ALLOW_INFRA_CHANGE=true\n' >>"$CF/set"
+assert_eq "an empty blocked list and infra true are honoured" "[] true" "$(flag_of "$CF/set")"
+printf 'BOARD_OWNER=a\nBOARD_PROJECT=1\nBOARD_ALLOWED_OWNERS=a\nBOARD_ALLOW_INFRA_CHANGE=yes\n' >"$CF/bad"
+BOARD_WORKER_CONFIG="$CF/bad" bash "$CHECK" https://github.com/a/x/issues/1 2>/dev/null
+assert_eq "an invalid flag exits 2" "2" "$?"
+rm -rf "$CF"
+
+echo "Visibility"
+vis() { (source "$LIB"; board_visibility_blocked gusdecool/x); echo $?; }
+echo '{"visibility":"PUBLIC"}' >"$STUB_DIR/gh-repo-view"
+assert_eq "a public repo is blocked by default" "0" "$(vis)"
+echo '{"visibility":"PRIVATE"}' >"$STUB_DIR/gh-repo-view"
+assert_eq "a private repo is allowed" "1" "$(vis)"
+touch "$STUB_DIR/gh-fail-repo-view"
+assert_eq "an unreadable visibility is reported as 2" "2" "$(vis)"
+rm -f "$STUB_DIR/gh-fail-repo-view"
+
 echo "Owner allow-list"
 for repo in gusdecool/x bungamata/x; do
   owner_ok "$repo"
@@ -149,6 +178,7 @@ reset_board() {
   cp "$FIX/items.json" "$STUB_DIR/gh-project-item-list"
   cp "$FIX/fields.json" "$STUB_DIR/gh-project-field-list"
   cp "$FIX/project.json" "$STUB_DIR/gh-project-view"
+  echo '{"visibility":"PRIVATE"}' >"$STUB_DIR/gh-repo-view"
   set_body $'## Goal\nX\n\n## Done when\nY\n'
 }
 
@@ -308,6 +338,84 @@ assert_eq "dry-run still picks the next ready card" "11" "$(jq -r .number <<<"$O
 assert_eq "dry-run exits 0" "0" "$CODE"
 assert_eq "dry-run never comments, labels or moves" "0" \
   "$(grep -c -E '^(issue comment|issue edit|project item-edit)' "$STUB_DIR/calls.log" || true)"
+
+echo "Pick next with a blocked visibility"
+reset_board
+echo '{"visibility":"PUBLIC"}' >"$STUB_DIR/gh-repo-view"
+run_pick
+assert_eq "all public: nothing is picked" "1" "$CODE"
+assert_eq "a public repo's card is commented" "1" \
+  "$(grep -c '^issue comment https://github.com/gusdecool/x/issues/12 --body .*visibility is blocked' \
+    "$STUB_DIR/calls.log")"
+assert_eq "a public repo's card gets HITL" "1" \
+  "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/12 --add-label HITL' "$STUB_DIR/calls.log")"
+assert_eq "a public repo's card moves to Backlog" "1" \
+  "$(grep -c '^project item-edit .*--id I12 .*--single-select-option-id o-backlog' "$STUB_DIR/calls.log")"
+reset_board
+echo '{"visibility":"PUBLIC"}' >"$STUB_DIR/gh-repo-view"
+OUT="$(TODAY=2026-11-06 bash "$PICK" --dry-run 2>/dev/null)"
+assert_eq "dry-run on a public repo changes nothing" "0" \
+  "$(grep -c -E '^(issue comment|issue edit|project item-edit)' "$STUB_DIR/calls.log" || true)"
+reset_board
+touch "$STUB_DIR/gh-fail-repo-view"
+run_pick
+assert_eq "an unreadable visibility skips the card, exit 1" "1" "$CODE"
+assert_eq "an unreadable visibility changes nothing" "0" \
+  "$(grep -c -E '^(issue comment|issue edit|project item-edit)' "$STUB_DIR/calls.log" || true)"
+rm -f "$STUB_DIR/gh-fail-repo-view"
+
+echo "Diff check"
+# Runs board-check-diff on a file list; sets OUT and RC.
+run_diff() { printf '%s\n' "$@" >"$STUB_DIR/gh-pr-diff"; OUT="$(bash "$DIFF" 3 gusdecool/x 2>/dev/null)"; RC=$?; }
+run_diff src/app.ts README.md
+assert_eq "plain files pass" "0 false false" "$RC $(jq -r '[.cicd,.infra]|join(" ")' <<<"$OUT")"
+run_diff src/app.ts .github/workflows/ci.yml
+assert_eq "a workflow file is CI/CD" "1 true" "$RC $(jq -r .cicd <<<"$OUT")"
+run_diff infra/main.tf
+assert_eq "a .tf file is infra" "1 true" "$RC $(jq -r .infra <<<"$OUT")"
+run_diff services/api/Dockerfile
+assert_eq "a nested Dockerfile is infra" "1 true" "$RC $(jq -r .infra <<<"$OUT")"
+run_diff .GitHub/Workflows/CI.yml
+assert_eq "upper case does not hide CI/CD" "1 true" "$RC $(jq -r .cicd <<<"$OUT")"
+run_diff docs/terraform-notes.md
+assert_eq "a doc that only mentions terraform passes" "0" "$RC"
+printf '%s\n' deployment/prod.yaml >"$STUB_DIR/gh-pr-diff"
+OUT="$(BOARD_WORKER_CONFIG="$FIX/config-extra" bash "$DIFF" 3 gusdecool/x 2>/dev/null)"
+assert_eq "extra infra globs from the config apply" "true" "$(jq -r .infra <<<"$OUT")"
+touch "$STUB_DIR/gh-fail-pr-diff"
+bash "$DIFF" 3 gusdecool/x 2>/dev/null
+assert_eq "an unreadable file list exits 2" "2" "$?"
+rm -f "$STUB_DIR/gh-fail-pr-diff"
+
+echo "Merge gate"
+G=https://github.com/gusdecool/x/issues/5
+# Runs the merge gate for an approval, author association, visibility and file list; sets OUT and RC.
+run_gate() {
+  jq -n --arg body "$1" --arg assoc "$2" '{body: $body, author_association: $assoc}' >"$STUB_DIR/gh-output"
+  echo "{\"visibility\":\"$3\"}" >"$STUB_DIR/gh-repo-view"
+  printf '%s\n' "${@:4}" >"$STUB_DIR/gh-pr-diff"
+  OUT="$(bash "$GATE" "$G" 3 2>/dev/null)"; RC=$?
+}
+run_gate $'Auto merge: true\n' OWNER PRIVATE src/a.ts
+assert_eq "everything in order is allowed" "0 true" "$RC $(jq -r .allowed <<<"$OUT")"
+run_gate $'Auto merge: true\n' OWNER PUBLIC src/a.ts
+assert_eq "a public repo blocks the merge" "1" "$RC"
+run_gate $'Goal only\n' OWNER PRIVATE src/a.ts
+assert_eq "no Auto merge line blocks the merge" "1" "$RC"
+run_gate $'Auto merge: true\n' OWNER PRIVATE .github/workflows/x.yml
+assert_eq "a CI/CD change blocks the merge" "1" "$RC"
+run_gate $'Auto merge: true\n' OWNER PRIVATE main.tf
+assert_eq "an infra change blocks by default" "1" "$RC"
+OUT="$(BOARD_WORKER_CONFIG="$FIX/config-infra" bash "$GATE" "$G" 3 2>/dev/null)"; RC=$?
+assert_eq "an infra change passes when the flag is true" "0" "$RC"
+printf '%s\n' .github/workflows/x.yml >"$STUB_DIR/gh-pr-diff"
+OUT="$(BOARD_WORKER_CONFIG="$FIX/config-infra" bash "$GATE" "$G" 3 2>/dev/null)"; RC=$?
+assert_eq "a CI/CD change blocks even with the infra flag" "1" "$RC"
+run_gate $'Auto merge: true\n' OWNER PRIVATE src/a.ts
+touch "$STUB_DIR/gh-fail-pr-diff"
+OUT="$(bash "$GATE" "$G" 3 2>/dev/null)"; RC=$?
+assert_eq "an unreadable file list blocks the merge" "1" "$RC"
+rm -f "$STUB_DIR/gh-fail-pr-diff"
 
 echo "Precheck"
 NOW_ISO=2026-11-06T12:00:00Z

@@ -1,0 +1,4 @@
+BOARD_OWNER=bungamata
+BOARD_PROJECT=9
+BOARD_ALLOWED_OWNERS=gusdecool,bungamata
+BOARD_EXTRA_INFRA_PATHS=deployment/*

@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Classifies the files a PR changes, so a script (not the model) decides what needs a human.
+# Usage: board-check-diff <pr-number> <owner/repo>
+# Prints {"cicd":bool,"infra":bool,"paths":[flagged paths]}; exits 0 when nothing is flagged, 1 when something is,
+# 2 when the file list cannot be read.
+# CI/CD files (workflows and pipelines) are where an injected change would persist or leak secrets, so they always
+# need a human. Infra files (IaC, container and cluster definitions) need one unless BOARD_ALLOW_INFRA_CHANGE=true.
+# Extra globs for a user's own layout come from BOARD_EXTRA_CICD_PATHS and BOARD_EXTRA_INFRA_PATHS in the config.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
+
+# Prints an error and exits 2.
+die() { echo "board-check-diff: $*" >&2; exit 2; }
+
+[ "$#" -eq 2 ] || die "usage: board-check-diff <pr-number> <owner/repo>"
+[[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "bad arguments: $*"
+
+CICD_GLOBS=".github/* .gitlab-ci* .circleci/* .buildkite/* .travis.yml appveyor.yml bitbucket-pipelines.yml
+  Jenkinsfile* buildspec* azure-pipelines* cloudbuild* deploy/* deploy.sh"
+INFRA_GLOBS="*.tf *.tfvars *.tf.json terraform/* Dockerfile* *.dockerfile docker-compose* compose.y*ml k8s/*
+  kubernetes/* helm/* charts/* Chart.yaml kustomization.y*ml cloudformation* serverless.y*ml Pulumi* ansible/*
+  playbook*.y*ml *.bicep cdk.json"
+
+# Exits 0 when path $1 matches any glob in the rest of the arguments, at the repo root or at any depth.
+matches_any() {
+  local p="$1" g
+  shift
+  for g in "$@"; do
+    # shellcheck disable=SC2053 # the glob is meant to be a pattern
+    [[ "$p" == $g || "$p" == */$g ]] && return 0
+  done
+  return 1
+}
+
+files="$(gh pr diff "$1" --repo "$2" --name-only)" || die "cannot read the files of PR $1"
+# Globs are lower-cased once and kept in arrays, so they are never expanded against the current directory.
+IFS=', ' read -r -a cicd_globs <<<"$(tr '[:upper:]\n' '[:lower:] ' <<<"$CICD_GLOBS ${BOARD_EXTRA_CICD_PATHS:-}")"
+IFS=', ' read -r -a infra_globs <<<"$(tr '[:upper:]\n' '[:lower:] ' <<<"$INFRA_GLOBS ${BOARD_EXTRA_INFRA_PATHS:-}")"
+
+cicd=false infra=false flagged=()
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  # Compare in lower case so Dockerfile and dockerfile, or .GitHub, are treated alike.
+  lower="$(tr '[:upper:]' '[:lower:]' <<<"$path")"
+  if matches_any "$lower" "${cicd_globs[@]}"; then
+    cicd=true flagged+=("$path")
+  elif matches_any "$lower" "${infra_globs[@]}"; then
+    infra=true flagged+=("$path")
+  fi
+done <<<"$files"
+
+printf '%s\n' "${flagged[@]+"${flagged[@]}"}" | jq -R -s -c --argjson cicd "$cicd" --argjson infra "$infra" \
+  'split("\n") | map(select(length > 0)) | {cicd: $cicd, infra: $infra, paths: .}'
+[ "$cicd" = false ] && [ "$infra" = false ]

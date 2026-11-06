@@ -24,11 +24,21 @@ and the repo owners it may merge in, and saves them in `~/.config/board-worker/c
 `~/.agents/skills/board-worker/scripts/board-setup` to create or change it). The scheduled dispatcher never creates it:
 without the file its precheck skips the run with one line.
 
-## Merge approval
+## Merge gate and flags
 
-The worker merges its own PR only when the issue carries the line `Auto merge: true` and its author is an owner,
-member or collaborator of the repo (`board-check-merge-approved`). Without it the worker finishes the PR, leaves it
-open, comments, labels the issue `HITL` and moves the card to Backlog. A human sets the line, never the agent.
+The worker merges its own PR only when `board-merge-gate` exits 0. A script checks all of this, so issue text cannot
+talk past it:
+
+- the issue says `Auto merge: true` and its author is an owner, member or collaborator of the repo;
+- the repo owner is allowed and its visibility is not in `BOARD_BLOCKED_VISIBILITIES` (default `public`: a card in a
+  public repo is ignored with a comment, labelled `HITL` and moved to Backlog);
+- the PR changes no CI/CD file (workflows, pipelines, deploy scripts): those always need a human;
+- the PR changes no infrastructure file (Terraform, Dockerfiles, Kubernetes, and so on) unless the config sets
+  `BOARD_ALLOW_INFRA_CHANGE=true` (default `false`).
+
+Otherwise the worker finishes the PR, leaves it open, comments the reasons, labels the issue `HITL` and moves the card
+to Backlog. Extra path patterns for your own layout go in `BOARD_EXTRA_CICD_PATHS` and `BOARD_EXTRA_INFRA_PATHS`.
+All flags live in `~/.config/board-worker/config`, which the worker must never edit.
 
 ## UAT section convention
 
