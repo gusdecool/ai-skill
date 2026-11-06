@@ -1,0 +1,14 @@
+{"items":[
+ {"id":"I10","status":"Todo","priority":"Low","iteration":{"title":"S3","startDate":"2026-11-02","duration":14},
+  "content":{"type":"Issue","number":10,"repository":"gusdecool/x","url":"https://github.com/gusdecool/x/issues/10"}},
+ {"id":"I11","status":"Todo","priority":"High","iteration":{"title":"S2","startDate":"2026-10-05","duration":14},
+  "content":{"type":"Issue","number":11,"repository":"gusdecool/x","url":"https://github.com/gusdecool/x/issues/11"}},
+ {"id":"I12","status":"Todo","priority":"High","iteration":{"title":"S3","startDate":"2026-11-02","duration":14},
+  "content":{"type":"Issue","number":12,"repository":"gusdecool/x","url":"https://github.com/gusdecool/x/issues/12"}},
+ {"id":"I13","status":"Todo","priority":"High","iteration":{"title":"S3","startDate":"2026-11-02","duration":14},
+  "content":{"type":"Issue","number":13,"repository":"acme/y","url":"https://github.com/acme/y/issues/13"}},
+ {"id":"I14","status":"Todo",
+  "content":{"type":"Issue","number":14,"repository":"gusdecool/x","url":"https://github.com/gusdecool/x/issues/14"}},
+ {"id":"I15","status":"Backlog","priority":"High",
+  "content":{"type":"Issue","number":15,"repository":"bungamata/z","url":"https://github.com/bungamata/z/issues/15"}}
+]}

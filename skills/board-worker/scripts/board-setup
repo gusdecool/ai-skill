@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Creates the board-worker config file, asking for each value unless it is given as a flag.
+# Usage: board-setup [--owner <org>] [--project <number>] [--allowed <owner1,owner2>]
+# Writes ${BOARD_WORKER_CONFIG:-$HOME/.config/board-worker/config}. Exits 0 when written, 2 on bad input.
+# Without a terminal and without all three flags it fails instead of waiting for an answer.
+set -euo pipefail
+
+file="${BOARD_WORKER_CONFIG:-$HOME/.config/board-worker/config}"
+owner="" project="" allowed=""
+
+# Prints an error and exits 2.
+die() { echo "board-setup: $*" >&2; exit 2; }
+
+while [ "$#" -gt 0 ]; do
+  [ "$#" -ge 2 ] || die "missing value for $1"
+  case "$1" in
+    --owner) owner="$2" ;;
+    --project) project="$2" ;;
+    --allowed) allowed="$2" ;;
+    *) die "usage: board-setup [--owner <org>] [--project <number>] [--allowed <owner1,owner2>]" ;;
+  esac
+  shift 2
+done
+
+# Asks for a value on the terminal; fails when there is no terminal. Args: prompt text.
+ask() {
+  [ -t 0 ] || die "no terminal: pass --owner, --project and --allowed"
+  local answer
+  read -r -p "$1 " answer
+  printf '%s' "$answer"
+}
+
+[ -n "$owner" ] || owner="$(ask "Owner of the GitHub Project (organization or user):")"
+[ -n "$project" ] || project="$(ask "Project number (the number in the project URL):")"
+[ -n "$allowed" ] || allowed="$(ask "Repo owners the worker may act on and merge in, comma-separated [$owner]:")"
+[ -n "$allowed" ] || allowed="$owner"
+
+mkdir -p "$(dirname "$file")"
+printf 'BOARD_OWNER=%s\nBOARD_PROJECT=%s\nBOARD_ALLOWED_OWNERS=%s\n' "$owner" "$project" "$allowed" >"$file"
+
+# Re-read the file through the library so a bad value is reported now, not on the first run.
+if ! (BOARD_WORKER_CONFIG="$file" source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh") 2>/dev/null; then
+  rm -f "$file"
+  die "invalid value (owner and allowed: letters, digits, '-'; project: digits); nothing written"
+fi
+echo "board-setup: wrote $file"

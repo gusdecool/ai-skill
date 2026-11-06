@@ -7,13 +7,69 @@ that read the shared skills folder.
 
 | Skill | Use case | Details |
 |---|---|---|
+| `/gusdecool:board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][board-worker] |
 | `/gusdecool:load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][load-balancer] |
 | `/gusdecool:mysql-branch` | MySQL branching: one database per git branch / worktree | [SKILL.md][mysql-branch] |
 
 In Claude Code the skill is `/gusdecool:<name>`. In other agents, say its name, for example "use MySQL branch".
 
+[board-worker]: skills/board-worker/SKILL.md
 [load-balancer]: skills/load-balancer/SKILL.md
 [mysql-branch]: skills/mysql-branch/SKILL.md
+
+## Board worker config
+
+`board-worker` names no organization. On first use it asks for the owner of your GitHub Project, the project number
+and the repo owners it may merge in, and saves them in `~/.config/board-worker/config` (run
+`~/.agents/skills/board-worker/scripts/board-setup` to create or change it). The scheduled dispatcher never creates it:
+without the file its precheck skips the run with one line.
+
+## Merge gate and flags
+
+The worker merges its own PR only when `board-merge-gate` exits 0. A script checks all of this, so issue text cannot
+talk past it:
+
+- the issue says `Auto merge: true` and its author is an owner, member or collaborator of the repo;
+- the repo owner is allowed and its visibility is not in `BOARD_BLOCKED_VISIBILITIES` (default `public`: a card in a
+  public repo is ignored with a comment, labelled `HITL` and moved to Backlog);
+- the PR changes no CI/CD file (workflows, pipelines, deploy scripts): those always need a human;
+- the PR changes no infrastructure file (Terraform, Dockerfiles, Kubernetes, and so on) unless the config sets
+  `BOARD_ALLOW_INFRA_CHANGE=true` (default `false`).
+
+Otherwise the worker finishes the PR, leaves it open, comments the reasons, labels the issue `HITL` and moves the card
+to Backlog. Extra path patterns for your own layout go in `BOARD_EXTRA_CICD_PATHS` and `BOARD_EXTRA_INFRA_PATHS`.
+All flags live in `~/.config/board-worker/config`, which the worker must never edit.
+
+## UAT section convention
+
+The `board-worker` skill reads each repo's README to learn how its UAT works. Add a `## UAT` section whose first line
+is one of these forms:
+
+```
+## UAT
+
+UAT: <branch> | <deploy workflow file> | <url>
+```
+
+`<branch>` is the branch the PR targets, so merging it triggers the deploy (a repo that promotes `main` to a `uat`
+branch writes `main`). `<deploy workflow file>` is the workflow under `.github/workflows/` that deploys it.
+
+```
+## UAT
+
+UAT: none
+```
+
+For a repo with no UAT server. If the section is missing, the worker treats the repo as having no UAT and its PR adds:
+
+```
+## UAT
+
+UAT: unknown
+Please fill in this section: replace the line above with the UAT line for this repo.
+```
+
+The board scripts read at most 500 items from the project board (a known limit).
 
 ## Install
 

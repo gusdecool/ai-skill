@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Checks that an issue body has the sections the board worker needs before it starts work.
+# Usage: board-check-ready <issue-url>
+# Prints {"ready":bool,"missing":[...]}; exits 0 when ready, 1 when not, 2 when the issue cannot be read.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
+
+# Prints an error and exits 2.
+die() { echo "board-check-ready: $*" >&2; exit 2; }
+
+# Exits 0 when the issue body has a heading matching the case-insensitive pattern: "## Goal", "## Goal:" or "**Goal**".
+has_heading() {
+  grep -qiE "^(#{1,6}[[:space:]]+($1)[[:space:]]*:?|\*\*($1):?\*\*:?)[[:space:]]*\$" <<<"$text"
+}
+
+# Prints the lines under the Open questions heading, skipping blanks, placeholders (none, n/a, -, an em dash) and
+# HTML comments.
+open_questions() {
+  awk '
+    { line = tolower($0); gsub(/^[ \t]+|[ \t]+$/, "", line) }
+    line ~ /^(#+[ \t]+open questions:?|\*\*open questions:?\*\*:?)$/ { inside = 1; next }
+    line ~ /^#+[ \t]/ || line ~ /^\*\*[^*]+\*\*:?$/ { inside = 0 }
+    !inside { next }
+    comment { if (line ~ /-->$/) comment = 0; next }
+    line ~ /^<!--/ { if (line !~ /-->$/) comment = 1; next }
+    line == "" || line ~ /^(none|n\/a|-|—)\.?$/ { next }
+    { print }
+  ' <<<"$text"
+}
+
+[ "$#" -eq 1 ] || die "usage: board-check-ready <issue-url>"
+url="$1"
+
+# Reads the issue body and drops CR characters so CRLF bodies match the same patterns.
+json="$(gh issue view "$url" --json body)" || die "cannot read $url"
+text="$(jq -r '.body // ""' <<<"$json" | tr -d '\r')" || die "cannot parse the body of $url"
+
+missing=()
+# A Goal section is required.
+has_heading "goal" || missing+=("Goal")
+# One acceptance section is required.
+has_heading "acceptance criteria|expected behavior|done when" || missing+=("Acceptance criteria")
+# Open questions must have no answers pending.
+[ -z "$(open_questions)" ] || missing+=("Open questions")
+
+ready=true
+[ "${#missing[@]}" -eq 0 ] || ready=false
+printf '%s\n' "${missing[@]+"${missing[@]}"}" | jq -R -s -c --argjson ready "$ready" \
+  'split("\n") | map(select(length > 0)) | {ready: $ready, missing: .}'
+[ "$ready" = true ]

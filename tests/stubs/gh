@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Test stub for gh: logs its arguments to $STUB_DIR/gh-args and $STUB_DIR/calls.log, then prints a canned output.
+# Output comes from $STUB_DIR/gh-<cmd>-<sub> (for example gh-project-item-list), for "issue view" from
+# $STUB_DIR/gh-issue-view-<last URL segment>, and otherwise from $STUB_DIR/gh-output when it exists.
+set -uo pipefail
+
+echo "$*" >>"$STUB_DIR/gh-args"
+echo "$*" >>"$STUB_DIR/calls.log"
+key="gh-${1:-}-${2:-}"
+[ "$key" != "gh-issue-view" ] || key="$key-$(basename "${3:-}")"
+[ ! -f "$STUB_DIR/gh-fail-$1-$2" ] || exit 1
+if [ -f "$STUB_DIR/$key" ]; then
+  cat "$STUB_DIR/$key"
+elif [ -f "$STUB_DIR/gh-output" ]; then
+  cat "$STUB_DIR/gh-output"
+fi
