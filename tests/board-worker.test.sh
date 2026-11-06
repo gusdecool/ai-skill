@@ -11,6 +11,7 @@ PICKPROV="$REPO/skills/board-worker/scripts/pick-provider"
 PRECHECK="$REPO/skills/board-worker/scripts/board-precheck"
 FIX="$REPO/tests/fixtures/board"
 export BOARD_WORKER_CONFIG="$FIX/config"
+APPROVE="$REPO/skills/board-worker/scripts/board-check-merge-approved"
 SETUP="$REPO/skills/board-worker/scripts/board-setup"
 export STUB_DIR
 STUB_DIR="$(mktemp -d)"
@@ -62,6 +63,30 @@ assert_eq "board-setup writes nothing on bad input" "no" "$([ -e "$CONF_DIR/new2
 BOARD_WORKER_CONFIG="$CONF_DIR/new3" bash "$SETUP" </dev/null 2>/dev/null
 assert_eq "board-setup without a terminal or flags exits 2" "2" "$?"
 rm -rf "$CONF_DIR"
+
+echo "Merge approval"
+U=https://github.com/gusdecool/x/issues/5
+# Runs the approval check for a body and an author association; sets OUT and RC.
+run_approve() {
+  jq -n --arg body "$1" --arg assoc "$2" '{body: $body, author_association: $assoc}' >"$STUB_DIR/gh-output"
+  OUT="$(bash "$APPROVE" "$U" 2>/dev/null)"; RC=$?
+}
+run_approve $'## Goal\nx\n\nAuto merge: true\n' OWNER
+assert_eq "flag plus owner is approved" "0 true" "$RC $(jq -r .approved <<<"$OUT")"
+run_approve $'auto MERGE: **true**\r\n' COLLABORATOR
+assert_eq "case, bold and CRLF still count" "0" "$RC"
+run_approve $'## Goal\nx\n' OWNER
+assert_eq "no flag is not approved" "1" "$RC"
+run_approve $'Auto merge: false\n' OWNER
+assert_eq "Auto merge: false is not approved" "1" "$RC"
+run_approve $'> Auto merge: true\n' OWNER
+assert_eq "a quoted flag is ignored" "1" "$RC"
+run_approve $'Auto merge: true\n' NONE
+assert_eq "flag from a stranger is not approved" "1" "$RC"
+run_approve $'Auto merge: true\n' CONTRIBUTOR
+assert_eq "a contributor is not enough" "1" "$RC"
+bash "$APPROVE" not-a-url 2>/dev/null
+assert_eq "bad URL exits 2" "2" "$?"
 
 echo "Owner allow-list"
 for repo in gusdecool/x bungamata/x; do

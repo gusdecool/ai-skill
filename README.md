@@ -24,6 +24,12 @@ and the repo owners it may merge in, and saves them in `~/.config/board-worker/c
 `~/.agents/skills/board-worker/scripts/board-setup` to create or change it). The scheduled dispatcher never creates it:
 without the file its precheck skips the run with one line.
 
+## Merge approval
+
+The worker merges its own PR only when the issue carries the line `Auto merge: true` and its author is an owner,
+member or collaborator of the repo (`board-check-merge-approved`). Without it the worker finishes the PR, leaves it
+open, comments, labels the issue `HITL` and moves the card to Backlog. A human sets the line, never the agent.
+
 ## UAT section convention
 
 The `board-worker` skill reads each repo's README to learn how its UAT works. Add a `## UAT` section whose first line

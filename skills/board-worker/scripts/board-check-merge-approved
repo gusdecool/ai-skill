@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Checks that a human approved the merge of this ticket's PR in the issue itself.
+# Usage: board-check-merge-approved <issue-url>
+# Approved = the issue body has a line "Auto merge: true" AND the issue author is an OWNER, MEMBER or COLLABORATOR of
+# the repo, so the flag cannot come from a stranger. Quoted lines (starting with ">") are ignored.
+# Prints {"approved":bool,"reason":"..."}; exits 0 when approved, 1 when not, 2 when the issue cannot be read.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
+
+# Prints an error and exits 2.
+die() { echo "board-check-merge-approved: $*" >&2; exit 2; }
+
+# Prints the verdict JSON and exits 0 (approved) or 1 (not approved). Args: true|false, reason.
+verdict() {
+  jq -n -c --argjson approved "$1" --arg reason "$2" '{approved: $approved, reason: $reason}'
+  [ "$1" = true ]
+  exit $?
+}
+
+[ "$#" -eq 1 ] || die "usage: board-check-merge-approved <issue-url>"
+url="$1"
+[[ "$url" =~ ^https://github\.com/([^/]+/[^/]+)/issues/([0-9]+)$ ]] || die "not an issue URL: $url"
+
+# Reads the issue body and the author's association with the repo.
+json="$(gh api "repos/${BASH_REMATCH[1]}/issues/${BASH_REMATCH[2]}")" || die "cannot read $url"
+text="$(jq -r '.body // ""' <<<"$json" | tr -d '\r')" || die "cannot parse the body of $url"
+assoc="$(jq -r '.author_association // ""' <<<"$json")" || die "cannot parse the author of $url"
+
+# The flag must be a plain line, "Auto merge: true", in any case, optionally bold.
+grep -qiE '^[[:space:]]*(\*\*)?auto merge:?(\*\*)?:?[[:space:]]*(\*\*)?true(\*\*)?[[:space:]]*$' <<<"$text" ||
+  verdict false "the issue has no line 'Auto merge: true'"
+# Only someone with write-level standing on the repo may grant it.
+case "$assoc" in
+  OWNER | MEMBER | COLLABORATOR) verdict true "Auto merge: true set by an issue author with association $assoc" ;;
+  *) verdict false "the issue author is '$assoc', not an owner, member or collaborator" ;;
+esac
