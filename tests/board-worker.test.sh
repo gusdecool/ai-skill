@@ -340,6 +340,18 @@ assert_eq "dry-run exits 0" "0" "$CODE"
 assert_eq "dry-run never comments, labels or moves" "0" \
   "$(grep -c -E '^(issue comment|issue edit|project item-edit)' "$STUB_DIR/calls.log" || true)"
 
+echo "Draft check"
+DRAFT="$(mktemp)"
+printf '## Goal\nShip it.\n\n## Acceptance criteria\n- works\n' >"$DRAFT"
+OUT="$(bash "$CHECK" --file "$DRAFT")"; CODE=$?
+assert_eq "a ready draft file passes" "0 true" "$CODE $(jq -r .ready <<<"$OUT")"
+printf '## Acceptance criteria\n- works\n' >"$DRAFT"
+OUT="$(bash "$CHECK" --file "$DRAFT")"; CODE=$?
+assert_eq "a draft without a Goal fails" "1 [\"Goal\"]" "$CODE $(jq -c .missing <<<"$OUT")"
+bash "$CHECK" --file "$DRAFT.none" 2>/dev/null
+assert_eq "a missing draft file exits 2" "2" "$?"
+rm -f "$DRAFT"
+
 echo "Pick next with a blocked visibility"
 reset_board
 echo '{"visibility":"PUBLIC"}' >"$STUB_DIR/gh-repo-view"
