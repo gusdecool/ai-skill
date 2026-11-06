@@ -44,5 +44,5 @@ is in `gusdecool/idea` `docs/orca-kanban-automation.md`. Stacked on `gusdecool/a
 
 ### Task 3: PR (mechanical)
 
-- [ ] **Step 1:** Push `feat/board-issue`, open the PR with base `feat/board-worker` (`Refs gusdecool/idea#24`), watch
+- [x] **Step 1:** Push `feat/board-issue`, open the PR with base `feat/board-worker` (`Refs gusdecool/idea#24`), watch
   CI. Waits for CI; the user merges PR 7 first, then retargets this PR to main.
