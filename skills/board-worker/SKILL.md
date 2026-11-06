@@ -111,9 +111,9 @@ stop (see "Stopping").
 
 Stop when: the spec is not ready, a question only the user can answer, 3 failed CI rounds, merge not approved
 (no `Auto merge: true`), merge blocked or conflicted, a PR aimed at a branch other than the named UAT branch, a
-failed or missing UAT deploy, the repo is not registered in Orca, or the 90-minute cap. The dispatcher owns the "repo not added to Orca" check and posts
-that comment; a worker that meets it makes the same stop with the comment "repo not added to Orca". Every stop does
-all of these:
+failed or missing UAT deploy, the repo is not registered in Orca, or the 90-minute cap. The dispatcher owns the
+"repo not added to Orca" check and posts that comment; a worker that meets it makes the same stop with the comment
+"repo not added to Orca". Every stop does all of these:
 
 1. Post an issue comment with the reason (and the failing log line, if any).
 2. Add the label `HITL`.
