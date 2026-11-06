@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Checks that an issue body has the sections the board worker needs before it starts work.
-# Usage: board-check-ready <issue-url>
+# Usage: board-check-ready <issue-url> | board-check-ready --file <draft.md>   (a draft is read from the file)
 # Prints {"ready":bool,"missing":[...]}; exits 0 when ready, 1 when not, 2 when the issue cannot be read.
 set -euo pipefail
 
@@ -29,12 +29,17 @@ open_questions() {
   ' <<<"$text"
 }
 
-[ "$#" -eq 1 ] || die "usage: board-check-ready <issue-url>"
-url="$1"
-
-# Reads the issue body and drops CR characters so CRLF bodies match the same patterns.
-json="$(gh issue view "$url" --json body)" || die "cannot read $url"
-text="$(jq -r '.body // ""' <<<"$json" | tr -d '\r')" || die "cannot parse the body of $url"
+if [ "$#" -eq 2 ] && [ "$1" = "--file" ]; then
+  # Reads a draft from a file and drops CR characters so CRLF text matches the same patterns.
+  [ -r "$2" ] || die "cannot read $2"
+  text="$(tr -d '\r' <"$2")"
+else
+  [ "$#" -eq 1 ] || die "usage: board-check-ready <issue-url> | --file <draft.md>"
+  url="$1"
+  # Reads the issue body and drops CR characters so CRLF bodies match the same patterns.
+  json="$(gh issue view "$url" --json body)" || die "cannot read $url"
+  text="$(jq -r '.body // ""' <<<"$json" | tr -d '\r')" || die "cannot parse the body of $url"
+fi
 
 missing=()
 # A Goal section is required.
