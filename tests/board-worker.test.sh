@@ -108,6 +108,7 @@ assert_eq "an invalid flag exits 2" "2" "$?"
 rm -rf "$CF"
 
 echo "Visibility"
+# shellcheck disable=SC1090 # LIB is a variable path
 vis() { (source "$LIB"; board_visibility_blocked gusdecool/x); echo $?; }
 echo '{"visibility":"PUBLIC"}' >"$STUB_DIR/gh-repo-view"
 assert_eq "a public repo is blocked by default" "0" "$(vis)"
