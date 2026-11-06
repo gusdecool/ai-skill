@@ -17,6 +17,13 @@ In Claude Code the skill is `/gusdecool:<name>`. In other agents, say its name, 
 [load-balancer]: skills/load-balancer/SKILL.md
 [mysql-branch]: skills/mysql-branch/SKILL.md
 
+## Board worker config
+
+`board-worker` names no organization. On first use it asks for the owner of your GitHub Project, the project number
+and the repo owners it may merge in, and saves them in `~/.config/board-worker/config` (run
+`~/.agents/skills/board-worker/scripts/board-setup` to create or change it). The scheduled dispatcher never creates it:
+without the file its precheck skips the run with one line.
+
 ## UAT section convention
 
 The `board-worker` skill reads each repo's README to learn how its UAT works. Add a `## UAT` section whose first line

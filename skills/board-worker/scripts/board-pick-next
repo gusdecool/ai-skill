@@ -19,14 +19,14 @@ die() { echo "board-pick-next: $*" >&2; exit 2; }
 
 # Prints the allowed Todo cards as JSON lines, best first.
 sorted_candidates() {
-  jq -c --arg today "${TODAY:-$(date +%F)}" '
+  jq -c --arg today "${TODAY:-$(date +%F)}" --arg allowed "$BOARD_ALLOWED_OWNERS" '
     def rank: {"High": 0, "Medium": 1, "Low": 2}[.priority // ""] // 3;
     def end_date: ((.startDate + "T00:00:00Z" | fromdate) + (.duration * 86400)) | todate | .[0:10];
     def current: if (.iteration | type) == "object" and (.iteration.startDate | type) == "string"
         and (.iteration.duration | type) == "number"
       then (.iteration.startDate <= $today and $today < (.iteration | end_date)) else false end;
     [.items[] | select(.status == "Todo" and .content.type == "Issue")
-     | select(.content.repository | split("/")[0] | IN("gusdecool", "bungamata"))]
+     | select(.content.repository | split("/")[0] | IN($allowed | split(",")[]))]
     | sort_by([rank, (if current then 0 else 1 end), .content.number])
     | .[]' <<<"$1"
 }

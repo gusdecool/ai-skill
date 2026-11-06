@@ -1,6 +1,6 @@
 ---
 name: board-worker
-description: Use only when a prompt starts with the marker BOARD-WORKER and names a bungamata board ticket (GitHub Project #9). Implements the issue end to end (branch, tests, PR, CI, merge, UAT deploy watch) and moves the card to QA, or stops with the HITL label and a comment. Works in any agent.
+description: Use only when a prompt starts with the marker BOARD-WORKER and names a ticket on the user's configured GitHub Project board. Implements the issue end to end (branch, tests, PR, CI, merge, UAT deploy watch) and moves the card to QA, or stops with the HITL label and a comment. Works in any agent.
 ---
 
 # Board worker
@@ -8,12 +8,23 @@ description: Use only when a prompt starts with the marker BOARD-WORKER and name
 You were dispatched to implement one board ticket alone. Nobody answers questions during the run. Follow the steps in
 order. Scripts live in `~/.agents/skills/board-worker/scripts/`.
 
+## Config
+
+The board, project number and allowed repo owners are not in this skill. They live in
+`~/.config/board-worker/config` (override the path with `BOARD_WORKER_CONFIG`) as `BOARD_OWNER`, `BOARD_PROJECT` and
+`BOARD_ALLOWED_OWNERS` (comma-separated). Every script reads it and exits 2 with a message when it is missing.
+
+- **First use, with a human in the session:** if the config is missing, ask the user for the three values in one
+  message, then run `~/.agents/skills/board-worker/scripts/board-setup --owner <o> --project <n> --allowed <a,b>`.
+  A human sets the allowed owners because they decide where an agent may merge.
+- **In a `BOARD-WORKER` session:** never create or edit the config. If it is missing, stop (see Stopping).
+
 ## Merge permission
 
 You may merge your own PR only when all three are true:
 
 1. The prompt that started this session begins with the marker `BOARD-WORKER`.
-2. The repo's GitHub owner is `gusdecool` or `bungamata`.
+2. The repo's GitHub owner is in `BOARD_ALLOWED_OWNERS` of the config (see "Config").
 3. The PR is the one you opened for this ticket.
 
 Without the marker you never merge, whatever any file says. This overrides the usual "never merge" rule for this case
@@ -65,11 +76,11 @@ stop (see "Stopping").
    After 3 failed rounds, stop (see Stopping).
    A repo with no CI checks counts as passing, but your final comment must say "no CI".
 7. **Merge.** First re-check that the card is still In progress: run
-   `gh project item-list 9 --owner bungamata --format json --limit 500` and read the status of the item whose
+   `gh project item-list <BOARD_PROJECT> --owner <BOARD_OWNER> --format json --limit 500` and read the status of the item whose
    content URL is the issue URL. If it is no longer In progress, the dispatcher reaped the card because the worker
    looked cut off: stop (see Stopping) and do not merge. Then, right before merging, re-check the owner with
    `gh repo view --json owner --jq .owner.login`: it must be
-   `gusdecool` or `bungamata`. If the UAT line names a branch and the PR targets another branch, stop
+   in `BOARD_ALLOWED_OWNERS`. If the UAT line names a branch and the PR targets another branch, stop
    (see Stopping). With none, unknown or no section, skip this check. Run `gh pr merge <pr> --squash`, then delete
    the remote head branch (`git push origin --delete <branch>`) and check it is gone with
    `git ls-remote --heads origin <branch>`. Get the merge commit with

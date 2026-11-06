@@ -10,6 +10,8 @@ SETSTATUS="$REPO/skills/board-worker/scripts/board-set-status"
 PICKPROV="$REPO/skills/board-worker/scripts/pick-provider"
 PRECHECK="$REPO/skills/board-worker/scripts/board-precheck"
 FIX="$REPO/tests/fixtures/board"
+export BOARD_WORKER_CONFIG="$FIX/config"
+SETUP="$REPO/skills/board-worker/scripts/board-setup"
 export STUB_DIR
 STUB_DIR="$(mktemp -d)"
 export PATH="$REPO/tests/stubs:$PATH"
@@ -38,6 +40,28 @@ run_check() {
 # Runs board_owner_allowed in a subshell so the sourced library stays isolated.
 # shellcheck disable=SC1090 # $LIB is a runtime path, not followable statically
 owner_ok() { (source "$LIB"; board_owner_allowed "$1"); }
+
+echo "Config"
+CONF_DIR="$(mktemp -d)"
+BOARD_WORKER_CONFIG="$CONF_DIR/none" bash "$CHECK" https://github.com/gusdecool/x/issues/1 2>"$CONF_DIR/err"
+assert_eq "missing config exits 2" "2" "$?"
+assert_eq "missing config prints one line naming board-setup" "1" "$(grep -c 'board-setup' "$CONF_DIR/err")"
+printf 'BOARD_OWNER=acme\nBOARD_PROJECT=abc\nBOARD_ALLOWED_OWNERS=acme\n' >"$CONF_DIR/bad"
+BOARD_WORKER_CONFIG="$CONF_DIR/bad" bash "$CHECK" https://github.com/gusdecool/x/issues/1 2>"$CONF_DIR/err"
+assert_eq "non-numeric project exits 2" "2" "$?"
+printf 'BOARD_OWNER=acme\nBOARD_PROJECT=4\nBOARD_ALLOWED_OWNERS=acme,beta\n' >"$CONF_DIR/acme"
+# shellcheck disable=SC1090
+assert_eq "config values drive the allow-list" "0 1" \
+  "$(BOARD_WORKER_CONFIG="$CONF_DIR/acme" bash -c \
+    'source "$1"; board_owner_allowed beta/x; a=$?; board_owner_allowed bungamata/x; echo "$a $?"' _ "$LIB")"
+BOARD_WORKER_CONFIG="$CONF_DIR/new/config" bash "$SETUP" --owner acme --project 4 --allowed acme,beta >/dev/null
+assert_eq "board-setup writes the config" "$(cat "$CONF_DIR/acme")" "$(cat "$CONF_DIR/new/config")"
+BOARD_WORKER_CONFIG="$CONF_DIR/new2" bash "$SETUP" --owner acme --project x --allowed acme 2>/dev/null
+assert_eq "board-setup rejects a bad project" "2" "$?"
+assert_eq "board-setup writes nothing on bad input" "no" "$([ -e "$CONF_DIR/new2" ] && echo yes || echo no)"
+BOARD_WORKER_CONFIG="$CONF_DIR/new3" bash "$SETUP" </dev/null 2>/dev/null
+assert_eq "board-setup without a terminal or flags exits 2" "2" "$?"
+rm -rf "$CONF_DIR"
 
 echo "Owner allow-list"
 for repo in gusdecool/x bungamata/x; do
