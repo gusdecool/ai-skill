@@ -18,6 +18,7 @@ SETUP="$REPO/skills/board-worker/scripts/board-setup"
 export STUB_DIR
 STUB_DIR="$(mktemp -d)"
 export PATH="$REPO/tests/stubs:$PATH"
+export BOARD_PRECHECK_LOG="$STUB_DIR/precheck.log"
 FAILS=0
 
 # Removes the stub output directory.
@@ -581,6 +582,12 @@ chmod +x "$STUB_DIR/pp-broken"
 run_precheck pp-broken
 assert_eq "an unreadable provider exits 2, not 1" "2" "$CODE"
 assert_one_line "unreadable provider"
+# Start the log empty so only this run is checked.
+: >"$BOARD_PRECHECK_LOG"
+run_precheck pp-broken
+LOGGED="$(cat "$BOARD_PRECHECK_LOG")"
+assert_eq "the log names the failing sub-script" "1" "$(grep -c 'pick-provider exited 2: boom' <<<"$LOGGED")"
+assert_eq "the log records the final exit" "1" "$(grep -c 'exit 2: cannot read the provider' <<<"$LOGGED")"
 touch "$STUB_DIR/gh-fail-project-item-list"
 run_precheck
 assert_eq "an unreadable board exits 2" "2" "$CODE"

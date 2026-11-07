@@ -15,11 +15,18 @@ source "$dir/board-lib.sh"
 # Seconds of silence after which an In progress card counts as stale.
 STALE_SECONDS=7200
 
+# Appends a timestamped line to the precheck log (BOARD_PRECHECK_LOG, default ~/.config/board-worker/precheck.log).
+# Best effort: a log write failure must not change precheck's exit code or its one stderr line.
+log() {
+  local file="${BOARD_PRECHECK_LOG:-$HOME/.config/board-worker/precheck.log}"
+  { mkdir -p "$(dirname "$file")" && printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >>"$file"; } 2>/dev/null || true
+}
+
 # Prints an error and exits 2 (gh or script failure, as opposed to a plain skip).
-die() { echo "board-precheck: $*" >&2; exit 2; }
+die() { log "exit 2: $*"; echo "board-precheck: $*" >&2; exit 2; }
 
 # Prints one line naming the failed condition and exits 1.
-fail() { echo "board-precheck: $*" >&2; exit 1; }
+fail() { log "exit 1: $*"; echo "board-precheck: $*" >&2; exit 1; }
 
 # Prints the In progress issue cards as JSON lines.
 in_progress_cards() {
@@ -77,10 +84,12 @@ done < <(in_progress_cards "$items")
 [ "$active" -lt 2 ] || fail "$active cards are In progress, the limit is 2"
 # Sub-script stderr is dropped so a skip prints exactly one line; exit 1 means "no", exit 2 means "cannot tell".
 code=0
-"$dir/board-pick-next" --dry-run >/dev/null 2>&1 || code=$?
+sub_err="$("$dir/board-pick-next" --dry-run 2>&1 >/dev/null)" || code=$?
+[ "$code" -eq 0 ] || log "board-pick-next exited $code: $sub_err"
 [ "$code" -ne 1 ] || fail "no pick-able Todo card"
 [ "$code" -eq 0 ] || die "cannot read the board for a Todo card"
 code=0
-"${PICK_PROVIDER:-$dir/pick-provider}" >/dev/null 2>&1 || code=$?
+sub_err="$("${PICK_PROVIDER:-$dir/pick-provider}" 2>&1 >/dev/null)" || code=$?
+[ "$code" -eq 0 ] || log "pick-provider exited $code: $sub_err"
 [ "$code" -ne 1 ] || fail "no provider has quota left"
 [ "$code" -eq 0 ] || die "cannot read the provider quotas"
