@@ -332,7 +332,7 @@ tweak_accounts '.result.rateLimits.claude.session = null | .result.rateLimits.cl
 OUT="$(run_provider "$STUB_DIR/accounts.json")"
 assert_eq "a provider with no windows is not eligible" "codex" "$(jq -r .provider <<<"$OUT")"
 
-tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 74.9 | .result.rateLimits.claude.session.usedPercent = 60
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 74.9 | .result.rateLimits.claude.session.usedPercent = 70
   | .result.rateLimits.codex.session.usedPercent = 1'
 OUT="$(run_provider "$STUB_DIR/accounts.json")"
 assert_eq "without the flag codex can win" "codex" "$(jq -r .provider <<<"$OUT")"
