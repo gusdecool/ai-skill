@@ -331,6 +331,15 @@ tweak_accounts '.result.rateLimits.claude.session = null | .result.rateLimits.cl
 OUT="$(run_provider "$STUB_DIR/accounts.json")"
 assert_eq "a provider with no windows is not eligible" "codex" "$(jq -r .provider <<<"$OUT")"
 
+# With ORCA_BIN unset and no orca on PATH (the Orca scheduler's case), pick-provider uses the fallback binary.
+NOORCA="$STUB_DIR/noorca-bin"
+mkdir -p "$NOORCA"
+for tool in jq date dirname cat; do ln -sf "$(command -v "$tool")" "$NOORCA/$tool"; done
+OUT="$(env -u ORCA_BIN PATH="$NOORCA" ORCA_FALLBACK_BIN="$STUB_DIR/orca" ACCOUNTS_FIXTURE="$FIX/accounts.json" \
+  CODEX_MODELS_CACHE="$STUB_DIR/codex-models.json" NOW_MS=1000000000000 "$(command -v bash)" "$PICKPROV" 2>/dev/null)"
+CODE=$?
+assert_eq "no orca on PATH uses the fallback binary" "codex 0" "$(jq -r .provider <<<"$OUT") $CODE"
+
 echo "Pick next --dry-run"
 reset_board
 make_unready 12
