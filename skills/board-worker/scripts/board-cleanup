@@ -1,29 +1,38 @@
 #!/usr/bin/env bash
-# Sweeps finished board workers: for every non-main Orca worktree named issue-<n> whose branch has a MERGED PR and
-# no uncommitted changes, closes its terminals, removes the worktree and deletes the remote branch.
-# Why a sweep: a PR may be merged by a human long after the worker stopped, so one pass over all worktrees catches
-# both cases. A dirty worktree or an unmerged PR is never touched. Prints one line per worktree handled.
+# Sweeps finished board workers: for every non-main Orca worktree named issue-<n> with no uncommitted changes whose
+# branch has a MERGED PR, or whose card is in the Done column, closes its terminals and removes the worktree.
+# The remote branch is deleted only when the PR is merged.
+# Why a sweep: a PR may be merged, or the card moved to Done, by a human long after the worker stopped, so one pass
+# over all worktrees catches every case. A dirty worktree is never touched. Prints one line per worktree handled.
 set -uo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
+
+# Card statuses by "owner/repo#number", one per line, so each worktree is matched without another API call.
+statuses="$(board_items 2>/dev/null | jq -r '.items[] | select(.content.number != null)
+  | "\(.content.repository)#\(.content.number)\t\(.status // "")"')" || statuses=""
 
 orca worktree list --json |
   jq -r '.result.worktrees[] | select(.isMainWorktree == false and (.displayName | test("^issue-[0-9]+$")))
          | [.path, (.branch | sub("^refs/heads/"; ""))] | @tsv' |
 while IFS=$'\t' read -r path branch; do
+  name="$(basename "$path")"
   # Skip a worktree that still holds uncommitted work.
   if [ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]; then
     echo "skip $path: uncommitted changes"; continue
   fi
   # Find the GitHub repo from the worktree's origin remote.
   slug="$(git -C "$path" remote get-url origin | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')"
-  # Only clean up when the branch's PR is merged.
+  # Clean up only when the branch's PR is merged or the card is Done.
   merged="$(gh pr list --repo "$slug" --head "$branch" --state merged --json number --jq 'length')"
-  if [ "${merged:-0}" -lt 1 ]; then
-    echo "skip $path: no merged PR for $branch"; continue
+  status="$(awk -F'\t' -v k="$slug#${name#issue-}" '$1 == k { print $2 }' <<<"$statuses")"
+  if [ "${merged:-0}" -lt 1 ] && [ "$status" != "Done" ]; then
+    echo "skip $path: no merged PR and card not Done for $branch"; continue
   fi
   # Close terminals, remove the worktree and local branch, then the remote branch if it still exists.
   orca terminal close --worktree "path:$path" --all >/dev/null || echo "warn: terminal close failed for $path"
   orca worktree rm --worktree "path:$path" --delete-branch >/dev/null || { echo "fail $path: worktree rm"; continue; }
-  if gh api "repos/$slug/branches/$branch" >/dev/null 2>&1; then
+  if [ "${merged:-0}" -ge 1 ] && gh api "repos/$slug/branches/$branch" >/dev/null 2>&1; then
     gh api -X DELETE "repos/$slug/git/refs/heads/$branch" >/dev/null || echo "warn: remote branch delete failed"
   fi
   echo "cleaned $path ($slug $branch)"

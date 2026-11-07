@@ -613,9 +613,19 @@ assert_eq "cleanup closes its terminals" "1" "$(calls "orca terminal close --wor
 assert_eq "cleanup deletes the remote branch" "1" "$(calls "api -X DELETE repos/acme/app/git/refs/heads/feat/a")"
 assert_eq "cleanup skips a dirty worktree" "0" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-2")"
 echo 0 >"$STUB_DIR/gh-pr-list"
+rm -f "$STUB_DIR/gh-fail-project-item-list"
+echo '{"items": [{"status": "In progress", "content": {"repository": "acme/app", "number": 1}}]}' \
+  >"$STUB_DIR/gh-project-item-list"
 : >"$STUB_DIR/calls.log"
 bash "$CLEANUP" >/dev/null
-assert_eq "cleanup skips an unmerged PR" "0" "$(calls "orca worktree rm")"
+assert_eq "cleanup skips an unmerged PR whose card is not Done" "0" "$(calls "orca worktree rm")"
+echo '{"items": [{"status": "Done", "content": {"repository": "acme/app", "number": 1}}]}' \
+  >"$STUB_DIR/gh-project-item-list"
+: >"$STUB_DIR/calls.log"
+bash "$CLEANUP" >/dev/null
+assert_eq "cleanup removes a Done card's worktree" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-1")"
+assert_eq "cleanup keeps the remote branch when the PR is not merged" "0" "$(calls "api -X DELETE")"
+assert_eq "cleanup still skips a dirty Done worktree" "0" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-2")"
 
 if [ "$FAILS" -eq 0 ]; then echo "All board-worker tests passed"; fi
 exit "$FAILS"
