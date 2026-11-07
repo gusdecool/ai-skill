@@ -87,8 +87,8 @@ orchestrator on Claude within its reserved cutoff.
 - [x] **Step 2: `load-balancer/SKILL.md`:** the watch uses screen text and a human-prompt signal besides quota and
   silence; interval 10 minutes; never choose "switch model" on a provider prompt; the Orca adapter names `board-watch`.
 - [x] **Step 3: Run `bash tests/check-structure.sh` and the full test file, expect 0 FAIL.**
-- [ ] **Step 4: Commit,** push, open the `ai-skill` PR (`Refs` the issue if one exists), watch CI.
-- [ ] **Step 5: Idea repo:** branch, update `docs/orca-kanban-automation.md` (orchestrator flow, new prompt line),
+- [x] **Step 4: Commit,** push, open the `ai-skill` PR (`Refs` the issue if one exists), watch CI.
+- [x] **Step 5: Idea repo:** branch, update `docs/orca-kanban-automation.md` (orchestrator flow, new prompt line),
   PR, watch CI.
 - [ ] **Step 6: After the user merges:** `npx skills update -g`, then change the dispatcher prompt step 2 to
   `pick-provider --orchestrator` with `orca automations edit`.
