@@ -334,7 +334,7 @@ assert_eq "a provider with no windows is not eligible" "codex" "$(jq -r .provide
 # With ORCA_BIN unset and no orca on PATH (the Orca scheduler's case), pick-provider uses the fallback binary.
 NOORCA="$STUB_DIR/noorca-bin"
 mkdir -p "$NOORCA"
-for tool in jq date dirname cat; do ln -sf "$(command -v "$tool")" "$NOORCA/$tool"; done
+for tool in bash jq date dirname cat; do ln -sf "$(command -v "$tool")" "$NOORCA/$tool"; done
 OUT="$(env -u ORCA_BIN PATH="$NOORCA" ORCA_FALLBACK_BIN="$STUB_DIR/orca" ACCOUNTS_FIXTURE="$FIX/accounts.json" \
   CODEX_MODELS_CACHE="$STUB_DIR/codex-models.json" NOW_MS=1000000000000 "$(command -v bash)" "$PICKPROV" 2>/dev/null)"
 CODE=$?
