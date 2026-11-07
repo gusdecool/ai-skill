@@ -66,13 +66,13 @@ orchestrator on Claude within its reserved cutoff.
   error JSON and exit 1; `board-precheck` calls it with that flag and its failure line reads
   "no provider has quota left for the orchestrator (claude)".
 
-- [ ] **Step 1: Write failing tests:** claude under cutoff with codex higher scoring picks claude; claude session 80
+- [x] **Step 1: Write failing tests:** claude under cutoff with codex higher scoring picks claude; claude session 80
   with codex free exits 1 with `error`; default call unchanged.
-- [ ] **Step 2: Run, expect FAIL.**
-- [ ] **Step 3: Implement** the flag by restricting `result` to claude before the eligibility check; update the
+- [x] **Step 2: Run, expect FAIL.**
+- [x] **Step 3: Implement** the flag by restricting `result` to claude before the eligibility check; update the
   precheck call and message.
-- [ ] **Step 4: Run the full test file, expect 0 FAIL.**
-- [ ] **Step 5: Commit** "Run the board orchestrator on claude within its reserved cutoff".
+- [x] **Step 4: Run the full test file, expect 0 FAIL.**
+- [x] **Step 5: Commit** "Run the board orchestrator on claude within its reserved cutoff".
 
 ### Task 3: skill text and dispatcher prompt (mechanical)
 

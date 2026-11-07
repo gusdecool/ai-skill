@@ -40,7 +40,8 @@ them, and takes over on another provider when one is stuck, until the ticket rea
      over the load-balancer cutoff), `silent` (output unchanged for `SILENT_SECONDS`, default 600).
    - exit 2: Orca could not be read.
 2. `pick-provider --orchestrator`: picks only claude, and only when it is under its reserved cutoffs. `board-precheck`
-   uses it, so a run never starts when the orchestrator itself has no quota. Why: Claude's buffer is the reserved cutoff.
+   uses it, so a run never starts when the orchestrator itself has no quota. Why: Claude's buffer is the reserved
+   cutoff.
 3. Skill text: `board-worker` step 4 becomes orchestrate-and-watch for plans of two or more tasks; the stop clock
    is 180 minutes (takeovers add time); the orchestrator posts an issue comment on every task finish, every takeover
    and at least hourly, because the 2-hour reaper reads issue and PR activity. `load-balancer` gains the screen-text

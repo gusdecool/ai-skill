@@ -288,7 +288,7 @@ JSON
 # Runs pick-provider against a fixture at the fixed clock, storing stdout in OUT and the exit code in CODE.
 run_provider() {
   ACCOUNTS_FIXTURE="$1" ORCA_BIN="$STUB_DIR/orca" CODEX_MODELS_CACHE="$STUB_DIR/codex-models.json" \
-    NOW_MS=1000000000000 bash "$PICKPROV" 2>/dev/null
+    NOW_MS=1000000000000 bash "$PICKPROV" "${@:2}" 2>/dev/null
 }
 # Writes a modified copy of the accounts fixture, built from a jq filter, to $STUB_DIR/accounts.json.
 tweak_accounts() { jq "$1" "$FIX/accounts.json" >"$STUB_DIR/accounts.json"; }
@@ -331,6 +331,21 @@ assert_eq "a tie goes to claude" "claude" "$(jq -r .provider <<<"$OUT")"
 tweak_accounts '.result.rateLimits.claude.session = null | .result.rateLimits.claude.weekly = null'
 OUT="$(run_provider "$STUB_DIR/accounts.json")"
 assert_eq "a provider with no windows is not eligible" "codex" "$(jq -r .provider <<<"$OUT")"
+
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 74.9 | .result.rateLimits.claude.session.usedPercent = 60
+  | .result.rateLimits.codex.session.usedPercent = 1'
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+assert_eq "without the flag codex can win" "codex" "$(jq -r .provider <<<"$OUT")"
+OUT="$(run_provider "$STUB_DIR/accounts.json" --orchestrator)"
+CODE=$?
+assert_eq "--orchestrator picks claude even when codex scores higher" "claude 0" "$(jq -r .provider <<<"$OUT") $CODE"
+
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rateLimits.claude.session.usedPercent = 80
+  | .result.rateLimits.codex.session.usedPercent = 1'
+OUT="$(run_provider "$STUB_DIR/accounts.json" --orchestrator)"
+CODE=$?
+assert_eq "--orchestrator exits 1 when claude is over its reserved cutoff" "1" "$CODE"
+assert_eq "--orchestrator names the error" "1" "$(jq -r 'has("error") | if . then 1 else 0 end' <<<"$OUT")"
 
 # With ORCA_BIN unset and no orca on PATH (the Orca scheduler's case), pick-provider uses the fallback binary.
 NOORCA="$STUB_DIR/noorca-bin"

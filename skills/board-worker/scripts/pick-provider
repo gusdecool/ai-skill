@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Picks the provider and Workhorse-tier model for the next worker, by remaining quota.
-# Usage: pick-provider
+# Usage: pick-provider [--orchestrator]
+# --orchestrator considers only claude (the session that runs the ticket) and needs it under its reserved cutoffs.
 # Prints {"provider","model","tier"} and exits 0, or {"error","earliestResetsAt"} and exits 1 when every provider is
 # over a cutoff or unavailable. Exits 2 when quotas cannot be read.
 # Rules and numbers are copied from skills/load-balancer/SKILL.md: cutoffs 90 session / 95 weekly (80 / 75 for the
@@ -22,6 +23,9 @@ codex_model() {
          | sort_by(.v) | last | .slug // empty' "${CODEX_MODELS_CACHE:-$HOME/.codex/models_cache.json}"
 }
 
+orchestrator=false
+[ "${1:-}" != "--orchestrator" ] || orchestrator=true
+
 accounts="$("$(orca_bin)" account list --json)" || { echo "pick-provider: cannot read quotas" >&2; exit 2; }
 now_ms="${NOW_MS:-$(($(date +%s) * 1000))}"
 
@@ -38,6 +42,9 @@ result="$(jq -c --argjson now "$now_ms" '
    | {provider: $p,
       freeAt: ($blocked | map(.w.resetsAt) | max),
       score: ($ws | map(urgency(.w)) | max)}]' <<<"$accounts")"
+
+# For the orchestrator only claude counts; the rest of the script then works unchanged.
+if [ "$orchestrator" = true ]; then result="$(jq -c 'map(select(.provider == "claude"))' <<<"$result")"; fi
 
 eligible="$(jq -c '[.[] | select(.freeAt == null)]' <<<"$result")"
 if [ "$(jq length <<<"$eligible")" -eq 0 ]; then

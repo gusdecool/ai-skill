@@ -2,7 +2,7 @@
 # Decides whether the board worker should start a new worker now.
 # Usage: board-precheck
 # Exits 0 only when a pick-able Todo card exists, fewer than 2 cards are In progress (after reaping stale ones) and
-# pick-provider exits 0. Otherwise exits 1 with one line on stderr naming the failed condition; 2 on gh failure.
+# pick-provider --orchestrator exits 0 (claude, the orchestrator, has quota). Otherwise exits 1 with one line on stderr naming the failed condition; 2 on gh failure.
 # Reaper: an In progress card whose issue and linked PRs show no activity for 2 hours gets the HITL label, moves to
 # HITL and gets a comment with the last activity time, the 2-hour rule and the last PR seen.
 # Activity is read per card: `gh issue view --json updatedAt` and `gh pr list --search "#<n>"` (PRs that mention it).
@@ -89,7 +89,7 @@ sub_err="$("$dir/board-pick-next" --dry-run 2>&1 >/dev/null)" || code=$?
 [ "$code" -ne 1 ] || fail "no pick-able Todo card"
 [ "$code" -eq 0 ] || die "cannot read the board for a Todo card"
 code=0
-sub_err="$("${PICK_PROVIDER:-$dir/pick-provider}" 2>&1 >/dev/null)" || code=$?
+sub_err="$("${PICK_PROVIDER:-$dir/pick-provider}" --orchestrator 2>&1 >/dev/null)" || code=$?
 [ "$code" -eq 0 ] || log "pick-provider exited $code: $sub_err"
-[ "$code" -ne 1 ] || fail "no provider has quota left"
+[ "$code" -ne 1 ] || fail "no provider has quota left for the orchestrator (claude)"
 [ "$code" -eq 0 ] || die "cannot read the provider quotas"
