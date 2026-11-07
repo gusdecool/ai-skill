@@ -53,7 +53,7 @@ to Done: only the human does.
 - `~/.agents/skills/board-worker/scripts/board-set-status <issue-url> <status>`: moves the card. Status is one of
   Backlog, HITL, Todo, In progress, QA, Done.
 
-The other scripts (`board-precheck`, `board-pick-next`, `pick-provider`) belong to the dispatcher. Do not run them.
+The other scripts (`board-precheck`, `board-pick-next`, `pick-provider`, `board-cleanup`) belong to the dispatcher. Do not run them.
 
 ## Clock
 
