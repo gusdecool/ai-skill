@@ -9,6 +9,7 @@ PICK="$REPO/skills/board-worker/scripts/board-pick-next"
 SETSTATUS="$REPO/skills/board-worker/scripts/board-set-status"
 PICKPROV="$REPO/skills/board-worker/scripts/pick-provider"
 PRECHECK="$REPO/skills/board-worker/scripts/board-precheck"
+WATCH="$REPO/skills/board-worker/scripts/board-watch"
 FIX="$REPO/tests/fixtures/board"
 export BOARD_WORKER_CONFIG="$FIX/config"
 GATE="$REPO/skills/board-worker/scripts/board-merge-gate"
@@ -287,7 +288,7 @@ JSON
 # Runs pick-provider against a fixture at the fixed clock, storing stdout in OUT and the exit code in CODE.
 run_provider() {
   ACCOUNTS_FIXTURE="$1" ORCA_BIN="$STUB_DIR/orca" CODEX_MODELS_CACHE="$STUB_DIR/codex-models.json" \
-    NOW_MS=1000000000000 bash "$PICKPROV" 2>/dev/null
+    NOW_MS=1000000000000 bash "$PICKPROV" "${@:2}" 2>/dev/null
 }
 # Writes a modified copy of the accounts fixture, built from a jq filter, to $STUB_DIR/accounts.json.
 tweak_accounts() { jq "$1" "$FIX/accounts.json" >"$STUB_DIR/accounts.json"; }
@@ -331,6 +332,21 @@ tweak_accounts '.result.rateLimits.claude.session = null | .result.rateLimits.cl
 OUT="$(run_provider "$STUB_DIR/accounts.json")"
 assert_eq "a provider with no windows is not eligible" "codex" "$(jq -r .provider <<<"$OUT")"
 
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 74.9 | .result.rateLimits.claude.session.usedPercent = 70
+  | .result.rateLimits.codex.session.usedPercent = 1'
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+assert_eq "without the flag codex can win" "codex" "$(jq -r .provider <<<"$OUT")"
+OUT="$(run_provider "$STUB_DIR/accounts.json" --orchestrator)"
+CODE=$?
+assert_eq "--orchestrator picks claude even when codex scores higher" "claude 0" "$(jq -r .provider <<<"$OUT") $CODE"
+
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rateLimits.claude.session.usedPercent = 80
+  | .result.rateLimits.codex.session.usedPercent = 1'
+OUT="$(run_provider "$STUB_DIR/accounts.json" --orchestrator)"
+CODE=$?
+assert_eq "--orchestrator exits 1 when claude is over its reserved cutoff" "1" "$CODE"
+assert_eq "--orchestrator names the error" "1" "$(jq -r 'has("error") | if . then 1 else 0 end' <<<"$OUT")"
+
 # With ORCA_BIN unset and no orca on PATH (the Orca scheduler's case), pick-provider uses the fallback binary.
 NOORCA="$STUB_DIR/noorca-bin"
 mkdir -p "$NOORCA"
@@ -339,6 +355,85 @@ OUT="$(env -u ORCA_BIN PATH="$NOORCA" ORCA_FALLBACK_BIN="$STUB_DIR/orca" ACCOUNT
   CODEX_MODELS_CACHE="$STUB_DIR/codex-models.json" NOW_MS=1000000000000 "$(command -v bash)" "$PICKPROV" 2>/dev/null)"
 CODE=$?
 assert_eq "no orca on PATH uses the fallback binary" "codex 0" "$(jq -r .provider <<<"$OUT") $CODE"
+
+echo "Board watch"
+W="$STUB_DIR/w"
+mkdir -p "$W"
+cat >"$STUB_DIR/watch-orca" <<'STUB'
+#!/usr/bin/env bash
+# Test stub for orca: worker-show and worker-read answer from $WATCH_DIR, account list from $ACCOUNTS_FIXTURE.
+case "$1 $2" in
+  "orchestration worker-show") cat "$WATCH_DIR/show-$4.json" ;;
+  "orchestration worker-read") cat "$WATCH_DIR/read-$4.json" ;;
+  "account list") cat "$ACCOUNTS_FIXTURE" ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "$STUB_DIR/watch-orca"
+
+# Writes the worker-show and worker-read answers for one dispatch. Args: id, stage, waitingOnHuman (json), tail text.
+watch_worker() {
+  jq -n --arg id "$1" --arg stage "$2" --argjson wait "$3" \
+    '{ok:true,result:{dispatchId:$id,state:"running",stage:$stage,waitingOnHuman:$wait}}' >"$W/show-$1.json"
+  jq -n --arg t "$4" '{ok:true,result:{terminal:{tail:($t | split("\n"))}}}' >"$W/read-$1.json"
+}
+# Runs board-watch with the stub orca and no waiting, storing stdout in OUT and the exit code in CODE.
+# POLLS (default 1) and SILENT (default 600) tune the run.
+run_watch() {
+  OUT="$(ORCA_BIN="$STUB_DIR/watch-orca" WATCH_DIR="$W" ACCOUNTS_FIXTURE="$STUB_DIR/accounts.json" \
+    NOW_MS=1000000000000 WATCH_INTERVAL=0 WATCH_MAX_POLLS="${POLLS:-1}" SILENT_SECONDS="${SILENT:-600}" \
+    bash "$WATCH" "$@" 2>/dev/null)"
+  CODE=$?
+}
+tweak_accounts '.result.rateLimits.codex.session.usedPercent = 10'
+
+watch_worker d1 settled false "all done"
+run_watch d1:codex
+assert_eq "a settled worker exits 0 with event settled" "0 settled" "$CODE $(jq -r .event <<<"$OUT")"
+
+watch_worker d1 running false "working on it"
+run_watch d1:codex
+assert_eq "a healthy worker reports no event" "3 none" "$CODE $(jq -r .event <<<"$OUT")"
+
+watch_worker d1 running true "Switch to gpt-6-luna?"
+run_watch d1:codex
+assert_eq "a worker waiting on a human is stuck" "1 stuck waiting_on_human" \
+  "$CODE $(jq -r '"\(.event) \(.reason)"' <<<"$OUT")"
+
+watch_worker d1 running false "ran git diff
+You've hit your usage limit. Upgrade to Pro or try again at 3:13 PM."
+run_watch d1:codex
+assert_eq "a usage limit on screen is stuck" "1 stuck limit_text" "$CODE $(jq -r '"\(.event) \(.reason)"' <<<"$OUT")"
+assert_eq "the limit line is in the detail" "1" "$(jq -r .detail <<<"$OUT" | grep -c 'try again at 3:13 PM')"
+
+OLD="You've hit your usage limit.
+$(seq 1 20 | sed 's/^/line /')"
+watch_worker d1 running false "$OLD"
+run_watch d1:codex
+assert_eq "a limit phrase more than 15 lines up is old output" "3 none" "$CODE $(jq -r .event <<<"$OUT")"
+
+tweak_accounts '.result.rateLimits.codex.session.usedPercent = 90'
+watch_worker d1 running false "working"
+run_watch d1:codex
+assert_eq "codex at its 90 session cutoff is stuck" "1 quota_cutoff" "$CODE $(jq -r .reason <<<"$OUT")"
+tweak_accounts '.result.rateLimits.codex.session.usedPercent = 89'
+run_watch d1:codex
+assert_eq "codex just under the cutoff is fine" "3" "$CODE"
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rateLimits.claude.session.usedPercent = 80'
+run_watch d1:claude
+assert_eq "claude at its reserved 80 session cutoff is stuck" "1 quota_cutoff" "$CODE $(jq -r .reason <<<"$OUT")"
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rateLimits.claude.session.usedPercent = 79'
+run_watch d1:claude
+assert_eq "claude just under its cutoff is fine" "3" "$CODE"
+
+tweak_accounts '.result.rateLimits.codex.session.usedPercent = 10'
+watch_worker d1 running false "same output"
+POLLS=2 SILENT=0 run_watch d1:codex
+assert_eq "unchanged output on two polls is silent" "1 silent" "$CODE $(jq -r .reason <<<"$OUT")"
+
+rm "$W/show-d1.json"
+run_watch d1:codex
+assert_eq "an unreadable worker exits 2" "2" "$CODE"
 
 echo "Pick next --dry-run"
 reset_board

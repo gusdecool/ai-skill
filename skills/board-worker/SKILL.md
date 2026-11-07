@@ -53,11 +53,17 @@ to Done: only the human does.
 - `~/.agents/skills/board-worker/scripts/board-set-status <issue-url> <status>`: moves the card. Status is one of
   Backlog, HITL, Todo, In progress, QA, Done.
 
+- `~/.agents/skills/board-worker/scripts/board-watch <dispatch>:<provider> ...`: waits (no model, no tokens) and
+  exits on the first event. Exit 0: a worker settled. Exit 1: a worker is stuck (`reason`: `waiting_on_human`,
+  `limit_text`, `quota_cutoff`, `silent`). Exit 2: Orca could not be read. Run it in the background with a 10-minute interval
+  (the default) while workers run.
+
 The other scripts (`board-precheck`, `board-pick-next`, `pick-provider`, `board-cleanup`) belong to the dispatcher. Do not run them.
 
 ## Clock
 
-You have a hard cap of 90 minutes per ticket. Note the start time with `date` and check it at each step. At the cap,
+You have a hard cap of 180 minutes per ticket (takeovers on another provider add time). Note the start time
+with `date` and check it at each step. At the cap,
 stop (see "Stopping").
 
 ## Steps
@@ -82,6 +88,22 @@ stop (see "Stopping").
    external APIs. Commit the spec and plan with the work. Open a PR with `Refs #N` in the body, never `Closes` or
    `Fixes`. If the README `UAT` section is missing, the PR also adds it with `UAT: unknown` and one line asking the
    human to fill it in.
+
+   **You are the orchestrator.** When the plan has two or more tasks, do not edit product code yourself: follow the
+   `load-balancer` skill (tier rules, provider choice, takeover). Dispatch each task as a worker with
+   `orca orchestration worker-start --worktree current`, an explicit model and the plan file, then run `board-watch`
+   in the background for all running workers and wait for it. Use no tokens while it waits.
+   - On `settled`: read the worker's output, check its work with the repo's gates, confirm the plan box is ticked,
+     release the worker, then dispatch the next task.
+   - On `stuck`: take over as the `load-balancer` skill says (stop the worker, keep its uncommitted draft, give the
+     same task to the next eligible provider at the same tier). Never answer a provider prompt such as "switch to
+     another model" with "switch", and never move up to a top-tier model. If every provider is over a cutoff, stop
+     (see Stopping) and put the earliest reset time in the comment.
+   - A plan with one task is implemented by you, inline.
+   - Post an issue comment at every task finish and every takeover, and at least once an hour while waiting. This
+     keeps the dispatcher's 2-hour stale clock from reaping the card while workers run.
+   Only you merge, and only as "Merge permission" allows; sub-workers never merge.
+
 5. **Risk check.** The change is high-risk if the diff touches any of: a database schema or migration, API design,
    payments, authentication, data isolation, infrastructure apply.
    If high-risk: before merging, post an issue comment saying what is risky, the files and lines, and a link to the
@@ -120,7 +142,7 @@ stop (see "Stopping").
 Stop when: the spec is not ready, a question only the user can answer, 3 failed CI rounds, the merge is blocked by
 `board-merge-gate` (no `Auto merge: true`, a CI/CD or infrastructure change, a blocked visibility), the merge is
 blocked or conflicted, a PR is aimed at a branch other than the named UAT branch, a UAT deploy failed or is missing,
-the repo is not registered in Orca, or the 90-minute cap is reached. The dispatcher owns the "repo not added to Orca"
+the repo is not registered in Orca, or the 180-minute cap is reached. The dispatcher owns the "repo not added to Orca"
 check and posts that comment; a worker that meets it makes the same stop with the comment "repo not added to Orca".
 Every stop does all of these:
 
