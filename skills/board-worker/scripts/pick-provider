@@ -8,7 +8,8 @@
 # the highest window urgency is the score (the load-balancer's "+5 session points per parallel task" rule is
 # omitted: this script starts one worker at a time); a provider with neither window is dropped; scores within 5
 # percent tie and go to claude, then to the listed order.
-# Env: ORCA_BIN (default orca), CODEX_MODELS_CACHE (default ~/.codex/models_cache.json), NOW_MS (clock, for tests).
+# Env: ORCA_BIN (default: orca from PATH, else ORCA_FALLBACK_BIN), ORCA_FALLBACK_BIN (default: the Orca app's bin),
+# CODEX_MODELS_CACHE (default ~/.codex/models_cache.json), NOW_MS (clock, for tests).
 set -euo pipefail
 
 # Prints the highest visible Sol model slug from the Codex models cache (compared by version number).
@@ -19,7 +20,16 @@ codex_model() {
          | sort_by(.v) | last | .slug // empty' "${CODEX_MODELS_CACHE:-$HOME/.codex/models_cache.json}"
 }
 
-accounts="$("${ORCA_BIN:-orca}" account list --json)" || { echo "pick-provider: cannot read quotas" >&2; exit 2; }
+# Prints the orca binary to run: ORCA_BIN, else orca on PATH, else the Orca app's own copy. Why: the Orca scheduler
+# runs the precheck with a PATH that lacks the app's bin folder, so a bare `orca` fails there.
+orca_bin() {
+  if [ -n "${ORCA_BIN:-}" ]; then echo "$ORCA_BIN"
+  elif command -v orca >/dev/null 2>&1; then command -v orca
+  else echo "${ORCA_FALLBACK_BIN:-/Applications/Orca.app/Contents/Resources/bin/orca}"
+  fi
+}
+
+accounts="$("$(orca_bin)" account list --json)" || { echo "pick-provider: cannot read quotas" >&2; exit 2; }
 now_ms="${NOW_MS:-$(($(date +%s) * 1000))}"
 
 # Keep only the three known providers, in listed order, scored; blocked ones carry the time they free up.
