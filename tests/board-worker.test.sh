@@ -585,5 +585,30 @@ touch "$STUB_DIR/gh-fail-project-item-list"
 run_precheck
 assert_eq "an unreadable board exits 2" "2" "$CODE"
 
+# board-cleanup: only a clean worktree with a merged PR is removed.
+CLEANUP="$REPO/skills/board-worker/scripts/board-cleanup"
+make_wt() {
+  mkdir -p "$STUB_DIR/$1" && git -C "$STUB_DIR/$1" init -q
+  git -C "$STUB_DIR/$1" remote add origin https://github.com/acme/app.git
+}
+make_wt issue-1; make_wt issue-2; echo x >"$STUB_DIR/issue-2/dirty"
+jq -n --arg a "$STUB_DIR/issue-1" --arg b "$STUB_DIR/issue-2" '{result: {worktrees: [
+  {path: $a, displayName: "issue-1", branch: "refs/heads/feat/a", isMainWorktree: false},
+  {path: $b, displayName: "issue-2", branch: "refs/heads/feat/b", isMainWorktree: false},
+  {path: "/main", displayName: "main", branch: "refs/heads/main", isMainWorktree: true}]}}' >"$STUB_DIR/orca-worktrees"
+echo 1 >"$STUB_DIR/gh-pr-list"
+: >"$STUB_DIR/calls.log"
+OUT="$(bash "$CLEANUP")"
+# Counts calls.log lines starting with the given text.
+calls() { grep -c "^$1" "$STUB_DIR/calls.log"; }
+assert_eq "cleanup removes a clean merged worktree" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-1")"
+assert_eq "cleanup closes its terminals" "1" "$(calls "orca terminal close --worktree path:$STUB_DIR/issue-1 --all")"
+assert_eq "cleanup deletes the remote branch" "1" "$(calls "api -X DELETE repos/acme/app/git/refs/heads/feat/a")"
+assert_eq "cleanup skips a dirty worktree" "0" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-2")"
+echo 0 >"$STUB_DIR/gh-pr-list"
+: >"$STUB_DIR/calls.log"
+bash "$CLEANUP" >/dev/null
+assert_eq "cleanup skips an unmerged PR" "0" "$(calls "orca worktree rm")"
+
 if [ "$FAILS" -eq 0 ]; then echo "All board-worker tests passed"; fi
 exit "$FAILS"

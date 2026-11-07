@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Test stub for orca: logs its arguments to $STUB_DIR/calls.log; "worktree list" prints $STUB_DIR/orca-worktrees.
+set -uo pipefail
+
+echo "orca $*" >>"$STUB_DIR/calls.log"
+if [ "${1:-}" = "worktree" ] && [ "${2:-}" = "list" ]; then cat "$STUB_DIR/orca-worktrees"; fi
