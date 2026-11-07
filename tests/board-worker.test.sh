@@ -625,7 +625,8 @@ echo '{"items": [{"status": "Done", "content": {"repository": "acme/app", "numbe
 bash "$CLEANUP" >/dev/null
 assert_eq "cleanup removes a Done card's worktree" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-1")"
 assert_eq "cleanup keeps the remote branch when the PR is not merged" "0" "$(calls "api -X DELETE")"
-assert_eq "cleanup still skips a dirty Done worktree" "0" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-2")"
+assert_eq "cleanup still skips a dirty Done worktree" "0" \
+  "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-2")"
 
 if [ "$FAILS" -eq 0 ]; then echo "All board-worker tests passed"; fi
 exit "$FAILS"
