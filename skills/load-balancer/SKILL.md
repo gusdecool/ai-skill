@@ -85,9 +85,18 @@ If every provider is over a cutoff or unavailable, stop and tell the user the ea
 
 ## Watching for stuck workers
 
-A worker that hits its provider's usage limit does not exit: it can sit live and silent. While workers run, every
-5 minutes re-read the quotas and flag (a) a provider with a running worker that passed its cutoff, and (b) a worker
-whose output has not changed for 10 minutes. On a flag:
+A worker that hits its provider's usage limit does not exit: it can sit live and silent, often on a prompt such as
+"Switch to another model?". While workers run, every 10 minutes (set by the tool; no model needed for the wait)
+re-read the quotas and each worker's screen, and flag:
+
+- (a) a worker the tool reports as waiting on a human prompt;
+- (b) a usage or rate limit phrase in the last 15 lines of the worker's screen (for example "You've hit your usage
+  limit"), the strongest signal: the quota numbers can lag behind it;
+- (c) a provider with a running worker that passed its cutoff;
+- (d) a worker whose output has not changed for 10 minutes.
+
+Never answer a provider prompt that offers to switch the worker to another model: it breaks the tier table. Treat it
+as a stall. On a flag:
 
 1. Stop the worker. If its terminal is user-owned and stays open, say so and ask the user to close it, so two agents
    never edit the same file.
@@ -121,6 +130,9 @@ first.
   dispatching, take the visible (`visibility: list`) slug for the tier's model family (Sol, Luna) with the highest
   version. If it is newer than what `AGENTS.md` names, use the newer one.
 - **Read, stop:** `orca orchestration worker-read`, `orca orchestration worker-stop --dispatch <id>`.
+- **Watch:** `~/.agents/skills/board-worker/scripts/board-watch <dispatch>:<provider> ...` does the 10-minute watch
+  above without a model (`worker-show` reports `waitingOnHuman`, `worker-read` gives the screen). It exits on the first
+  settled or stuck worker with one JSON line; run it in the background and re-run it after handling the event.
 - **Release:** `orca orchestration worker-release --dispatch <dispatch_id> --json` (keep with `worker-retain` only if
   asked). Before ending your turn run
   `orca orchestration worker-list --run <run_id> --terminal-state reclaimable --json` and make sure it is empty.

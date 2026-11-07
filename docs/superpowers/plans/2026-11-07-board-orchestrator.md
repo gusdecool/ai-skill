@@ -80,13 +80,13 @@ orchestrator on Claude within its reserved cutoff.
 - Modify: `skills/board-worker/SKILL.md`, `skills/load-balancer/SKILL.md`
 - Modify (idea repo, separate PR): `docs/orca-kanban-automation.md`
 
-- [ ] **Step 1: `board-worker/SKILL.md`:** add `board-watch` to the scripts list; step 4 orchestrates for two or more
+- [x] **Step 1: `board-worker/SKILL.md`:** add `board-watch` to the scripts list; step 4 orchestrates for two or more
   tasks (dispatch with `worker-start --worktree current`, run `board-watch` in the background, on `stuck` follow the
   load-balancer takeover, on `settled` check the work, release workers); one-task plans stay inline; heartbeat
   comment on each task finish, takeover and at least hourly; clock 180 minutes; only the orchestrator merges.
-- [ ] **Step 2: `load-balancer/SKILL.md`:** the watch uses screen text and a human-prompt signal besides quota and
+- [x] **Step 2: `load-balancer/SKILL.md`:** the watch uses screen text and a human-prompt signal besides quota and
   silence; interval 10 minutes; never choose "switch model" on a provider prompt; the Orca adapter names `board-watch`.
-- [ ] **Step 3: Run `bash tests/check-structure.sh` and the full test file, expect 0 FAIL.**
+- [x] **Step 3: Run `bash tests/check-structure.sh` and the full test file, expect 0 FAIL.**
 - [ ] **Step 4: Commit,** push, open the `ai-skill` PR (`Refs` the issue if one exists), watch CI.
 - [ ] **Step 5: Idea repo:** branch, update `docs/orca-kanban-automation.md` (orchestrator flow, new prompt line),
   PR, watch CI.
