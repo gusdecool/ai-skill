@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Moves an issue's card on the BM board to a Status column.
-# Usage: board-set-status <issue-url> <status>   (Backlog, Todo, In progress, QA or Done)
+# Usage: board-set-status <issue-url> <status>   (Backlog, HITL, Todo, In progress, QA or Done)
 # Exits 0 on success, 2 on a bad status, an unknown card or any gh failure.
 set -euo pipefail
 

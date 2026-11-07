@@ -4,7 +4,7 @@
 # Exits 0 only when a pick-able Todo card exists, fewer than 2 cards are In progress (after reaping stale ones) and
 # pick-provider exits 0. Otherwise exits 1 with one line on stderr naming the failed condition; 2 on gh failure.
 # Reaper: an In progress card whose issue and linked PRs show no activity for 2 hours gets the HITL label, moves to
-# Backlog and gets a comment with the last activity time, the 2-hour rule and the last PR seen.
+# HITL and gets a comment with the last activity time, the 2-hour rule and the last PR seen.
 # Activity is read per card: `gh issue view --json updatedAt` and `gh pr list --search "#<n>"` (PRs that mention it).
 # Env: PICK_PROVIDER (path of pick-provider), NOW_EPOCH (clock in seconds, for tests), TODAY (passed to pick-next).
 set -euo pipefail
@@ -40,14 +40,14 @@ last_activity() {
     | "\($latest) \($pr.url // "none")"'
 }
 
-# Moves a stale card to Backlog, then labels HITL, then comments why. Args: url, last-time, last-pr.
+# Moves a stale card to HITL, then labels HITL, then comments why. Args: url, last-time, last-pr.
 # The move comes first so a half-done reap still frees the slot; the comment last, as it bumps updatedAt.
 # Returns 1 with a message when a step fails.
 reap_card() {
-  "$dir/board-set-status" "$1" Backlog 2>/dev/null || { echo "cannot move $1 to Backlog" >&2; return 1; }
+  "$dir/board-set-status" "$1" HITL 2>/dev/null || { echo "cannot move $1 to HITL" >&2; return 1; }
   gh issue edit "$1" --add-label HITL >/dev/null || { echo "cannot label $1" >&2; return 1; }
   gh issue comment "$1" --body "No activity since $2 (no issue or PR update for 2 hours, the board worker rule), \
-so this card was moved back to Backlog with HITL. Last PR seen: $3." >/dev/null \
+so this card was moved to the HITL column with the HITL label. Last PR seen: $3." >/dev/null \
     || { echo "cannot comment on $1" >&2; return 1; }
 }
 

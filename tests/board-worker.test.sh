@@ -224,8 +224,8 @@ assert_eq "an unready card gets a comment naming the gap" "1" \
     "$STUB_DIR/calls.log")"
 assert_eq "an unready card gets the HITL label" "1" \
   "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/12 --add-label HITL' "$STUB_DIR/calls.log")"
-assert_eq "an unready card moves to Backlog" "1" \
-  "$(grep -c '^project item-edit .*--id I12 .*--single-select-option-id o-backlog' "$STUB_DIR/calls.log")"
+assert_eq "an unready card moves to HITL" "1" \
+  "$(grep -c '^project item-edit .*--id I12 .*--single-select-option-id o-hitl' "$STUB_DIR/calls.log")"
 assert_eq "parking moves, then labels, then comments" "project item-edit issue edit issue comment" \
   "$(grep -E '^(issue comment|issue edit|project item-edit) .*(I12|issues/12)' "$STUB_DIR/calls.log" \
     | awk '{printf "%s%s %s", (NR > 1 ? " " : ""), $1, $2}')"
@@ -362,8 +362,8 @@ assert_eq "a public repo's card is commented" "1" \
     "$STUB_DIR/calls.log")"
 assert_eq "a public repo's card gets HITL" "1" \
   "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/12 --add-label HITL' "$STUB_DIR/calls.log")"
-assert_eq "a public repo's card moves to Backlog" "1" \
-  "$(grep -c '^project item-edit .*--id I12 .*--single-select-option-id o-backlog' "$STUB_DIR/calls.log")"
+assert_eq "a public repo's card moves to HITL" "1" \
+  "$(grep -c '^project item-edit .*--id I12 .*--single-select-option-id o-hitl' "$STUB_DIR/calls.log")"
 reset_board
 echo '{"visibility":"PUBLIC"}' >"$STUB_DIR/gh-repo-view"
 OUT="$(TODAY=2026-11-06 bash "$PICK" --dry-run 2>/dev/null)"
@@ -479,8 +479,8 @@ assert_eq "the stale card gets a comment with the 2-hour rule, last activity and
   "$(grep -c -E 'issues/20 --body .*2026-11-06T09:00:00Z.*2 hours.*pull/99' "$STUB_DIR/calls.log")"
 assert_eq "the stale card gets the HITL label" "1" \
   "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/20 --add-label HITL' "$STUB_DIR/calls.log")"
-assert_eq "the stale card moves to Backlog" "1" \
-  "$(grep -c '^project item-edit .*--id I20 .*--single-select-option-id o-backlog' "$STUB_DIR/calls.log")"
+assert_eq "the stale card moves to HITL" "1" \
+  "$(grep -c '^project item-edit .*--id I20 .*--single-select-option-id o-hitl' "$STUB_DIR/calls.log")"
 assert_eq "the active card is left alone" "0" \
   "$(grep -c -E '^issue (comment|edit) .*issues/21' "$STUB_DIR/calls.log" || true)"
 assert_eq "the precheck never parks Todo cards" "0" \

@@ -1,6 +1,6 @@
 ---
 name: board-issue
-description: Use when the user wants to create or groom a GitHub issue for the board worker ("write a board issue", "turn this idea into a ticket", "make this ready for the agent"). Turns a rough idea into a final-spec issue the board-worker can finish alone, checks it with the same readiness rules, adds it to the project and, only if the user says yes, sets Auto merge. Not for BOARD-WORKER sessions.
+description: Use when the user wants to create or groom a GitHub issue for the board worker ("write a board issue", "turn this idea into a ticket", "make this ready for the agent"). Turns a rough idea into a final-spec issue the board-worker can finish alone, checks it with the same readiness rules, adds it to the project and, only if the user says yes, sets Auto merge, and asks about Auto merge for any existing issue that lacks the line before queuing it. Not for BOARD-WORKER sessions.
 ---
 
 # Board issue
@@ -56,7 +56,7 @@ Never use this skill in a session whose prompt starts with `BOARD-WORKER`: a wor
      `BOARD_ALLOW_INFRA_CHANGE` unset or `false`;
    - the repo is public and the config blocks `public` visibility (the card would be ignored).
 6. **Ask about merging**, as its own question, default no: "Should the agent merge this itself once CI is green
-   (`Auto merge: true`)? Without it the PR stays open for you and the card returns to Backlog with HITL." Write
+   (`Auto merge: true`)? Without it the PR stays open for you and the card moves to the HITL column." Write
    `Auto merge: true` only when the user answers yes in this conversation; otherwise leave `Auto merge: false`. Never
    decide it yourself. Why: the line is the human approval that the merge gate checks.
 7. **Create.** Show the final text and get an OK, then
@@ -67,4 +67,8 @@ Never use this skill in a session whose prompt starts with `BOARD-WORKER`: a wor
    `gh project field-list <BOARD_PROJECT> --owner <BOARD_OWNER> --format json`.
 8. **Status.** Run `board-set-status <issue-url> Backlog`. Move it to Todo only if the user says to queue it now, or
    answers yes when you ask. Why: Todo starts the worker within 10 minutes, so it is the user's go signal.
+   Before moving any card to Todo, read the issue body. If it has no `Auto merge:` line (an issue written by hand, or
+   one from before this rule), ask the step 6 question first, default no. On yes, append `Auto merge: true` to the body
+   with `gh issue edit` as the user's own account; on no, append `Auto merge: false`. Why: a missing line is a silent
+   no, and the user should decide it once, not discover an unmerged PR later.
 9. **Report** the issue URL, the card status, the Auto merge value and any warning from step 5.
