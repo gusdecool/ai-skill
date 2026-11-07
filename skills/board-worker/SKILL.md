@@ -54,8 +54,8 @@ to Done: only the human does.
   Backlog, HITL, Todo, In progress, QA, Done.
 
 - `~/.agents/skills/board-worker/scripts/board-watch <dispatch>:<provider> ...`: waits (no model, no tokens) and
-  exits on the first event. Exit 0: a worker settled. Exit 1: a worker is stuck (`reason`: `waiting_on_human`, `limit_text`,
-  `quota_cutoff`, `silent`). Exit 2: Orca could not be read. Run it in the background with a 10-minute interval
+  exits on the first event. Exit 0: a worker settled. Exit 1: a worker is stuck (`reason`: `waiting_on_human`,
+  `limit_text`, `quota_cutoff`, `silent`). Exit 2: Orca could not be read. Run it in the background with a 10-minute interval
   (the default) while workers run.
 
 The other scripts (`board-precheck`, `board-pick-next`, `pick-provider`, `board-cleanup`) belong to the dispatcher. Do not run them.
