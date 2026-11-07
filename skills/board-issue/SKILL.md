@@ -56,7 +56,7 @@ Never use this skill in a session whose prompt starts with `BOARD-WORKER`: a wor
      `BOARD_ALLOW_INFRA_CHANGE` unset or `false`;
    - the repo is public and the config blocks `public` visibility (the card would be ignored).
 6. **Ask about merging**, as its own question, default no: "Should the agent merge this itself once CI is green
-   (`Auto merge: true`)? Without it the PR stays open for you and the card returns to Backlog with HITL." Write
+   (`Auto merge: true`)? Without it the PR stays open for you and the card moves to the HITL column." Write
    `Auto merge: true` only when the user answers yes in this conversation; otherwise leave `Auto merge: false`. Never
    decide it yourself. Why: the line is the human approval that the merge gate checks.
 7. **Create.** Show the final text and get an OK, then

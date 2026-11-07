@@ -51,7 +51,7 @@ to Done: only the human does.
   `{"allowed":bool,"blocked":["reason",...]}`. Exit 0 means condition 4 of the merge permission holds; exit 1 means
   the merge is blocked for the listed reasons; exit 2 means something could not be read (treat as blocked).
 - `~/.agents/skills/board-worker/scripts/board-set-status <issue-url> <status>`: moves the card. Status is one of
-  Backlog, Todo, In progress, QA, Done.
+  Backlog, HITL, Todo, In progress, QA, Done.
 
 The other scripts (`board-precheck`, `board-pick-next`, `pick-provider`) belong to the dispatcher. Do not run them.
 
@@ -126,6 +126,7 @@ Every stop does all of these:
 
 1. Post an issue comment with the reason (and the failing log line, if any).
 2. Add the label `HITL`.
-3. Run `board-set-status <issue-url> Backlog`.
+3. Run `board-set-status <issue-url> HITL`. HITL is the column for started tickets that need the user;
+   Backlog is only for ideas not yet queued.
 4. End the session. Do not merge a PR that stopped on CI. For a failed UAT deploy the merge already happened, so say
    so in the comment.
