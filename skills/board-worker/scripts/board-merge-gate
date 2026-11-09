@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # The single deterministic check before a board worker may merge its PR.
 # Usage: board-merge-gate <ticket-key-or-browse-url> <pr-number>
-# Prints {"allowed":bool,"blocked":["reason",...]}; exits 0 only when every check passes, 1 when any blocks the merge,
-# 2 when something cannot be read (treat as blocked). The repo is the ticket's single component, named owner/repo.
+# Prints {"allowed":bool,"repo":"owner/repo","blocked":["reason",...]}; exits 0 only when every check passes, 1 when
+# any blocks the merge, 2 when something cannot be read (treat as blocked). The repo is the ticket's single component,
+# named owner/repo ("" when there is none); the caller must merge the PR in exactly that repo.
 # Checks, all by script so ticket text cannot talk past them:
 #   1. the repo owner is in BOARD_ALLOWED_OWNERS         2. the repo visibility is not in BOARD_BLOCKED_VISIBILITIES
 #   3. the ticket's "Auto merge" checkbox field is ticked (board-check-merge-approved)
 #   4. the PR changes no CI/CD file (always a human), and no infra file unless BOARD_ALLOW_INFRA_CHANGE=true
-# Without a valid component, checks 1, 2 and 4 are skipped and the merge is blocked.
+#   5. the PR in that repo is open and its branch starts with "<ticket key>-", so the component cannot point at
+#      an unrelated PR with the same number (checked before 4; if it blocks, 4 is skipped)
+# Without a valid component, checks 1, 2, 4 and 5 are skipped and the merge is blocked.
 set -euo pipefail
 
 dir="$(dirname "${BASH_SOURCE[0]}")"
@@ -29,6 +32,7 @@ repo="$(jq -r 'if (.fields.components | type) == "array" and (.fields.components
   then (.fields.components[0].name // "") else "" end' <<<"$json")" || die "cannot parse the components of $key"
 have_repo=true
 [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || have_repo=false
+[ "$have_repo" = true ] || repo=""
 
 blocked=()
 if [ "$have_repo" = true ]; then
@@ -52,8 +56,24 @@ case "$rc" in
     echo "approval could not be read")") ;;
   *) blocked+=("approval could not be read") ;;
 esac
-# 4. CI/CD and infra changes; they need a repo, so a ticket without one has nothing to check.
+# 5. The PR must be open in this repo and on this ticket's branch; without that there is nothing to trust.
+pr_ok=false
 if [ "$have_repo" = true ]; then
+  pr_json="$(gh pr view "$pr" --repo "$repo" --json headRefName,state 2>/dev/null)" || pr_json=""
+  state="$(jq -er '.state | strings' <<<"$pr_json" 2>/dev/null)" || state=""
+  branch="$(jq -er '.headRefName | strings' <<<"$pr_json" 2>/dev/null)" || branch=""
+  if [ -z "$state" ] || [ -z "$branch" ]; then
+    blocked+=("the PR could not be read in $repo")
+  elif [ "$state" != OPEN ]; then
+    blocked+=("the PR is not open")
+  elif [ "${branch:0:$((${#key} + 1))}" != "$key-" ]; then
+    blocked+=("the PR branch does not belong to this ticket (it must start with $key-)")
+  else
+    pr_ok=true
+  fi
+fi
+# 4. CI/CD and infra changes; they need a repo and a PR that passed check 5.
+if [ "$pr_ok" = true ]; then
   rc=0; diff_json="$("$dir/board-check-diff" "$pr" "$repo")" || rc=$?
   if [ "$rc" -eq 2 ]; then
     blocked+=("the PR file list could not be read")
@@ -68,6 +88,6 @@ fi
 
 allowed=true
 [ "${#blocked[@]}" -eq 0 ] || allowed=false
-printf '%s\n' "${blocked[@]+"${blocked[@]}"}" | jq -R -s -c --argjson allowed "$allowed" \
-  'split("\n") | map(select(length > 0)) | {allowed: $allowed, blocked: .}'
+printf '%s\n' "${blocked[@]+"${blocked[@]}"}" | jq -R -s -c --argjson allowed "$allowed" --arg repo "$repo" \
+  'split("\n") | map(select(length > 0)) | {allowed: $allowed, repo: $repo, blocked: .}'
 [ "$allowed" = true ]

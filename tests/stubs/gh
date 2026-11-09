@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Test stub for gh: logs its arguments to $STUB_DIR/gh-args and $STUB_DIR/calls.log, then prints a canned output.
 # Output comes from $STUB_DIR/gh-<cmd>-<sub> (for example gh-project-item-list), for "issue view" from
-# $STUB_DIR/gh-issue-view-<last URL segment>, and otherwise from $STUB_DIR/gh-output when it exists.
+# $STUB_DIR/gh-issue-view-<last URL segment>, for "pr view <n> --repo <r> --json headRefName,state" from
+# $STUB_DIR/gh-pr-view (like "pr diff" from gh-pr-diff; gh-fail-pr-view makes it exit 1), and otherwise from $STUB_DIR/gh-output when it exists.
 set -uo pipefail
 
 echo "$*" >>"$STUB_DIR/gh-args"

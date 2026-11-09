@@ -618,8 +618,10 @@ queue_gate() {
   reset_curl "200|$(jq -cn --argjson c "$COMPONENTS" '{fields: {components: $c}}')" "200|$FIELDS_OK" \
     "200|$(jq -cn --argjson v "$1" '{fields: {customfield_10036: $v}}')"
 }
+PRVIEW='{"headRefName":"BM-5-fix-it","state":"OPEN"}'
 run_gate() {
   queue_gate "$1"
+  printf '%s\n' "$PRVIEW" >"$STUB_DIR/gh-pr-view"
   echo "{\"visibility\":\"$2\"}" >"$STUB_DIR/gh-repo-view"
   printf '%s\n' "${@:3}" >"$STUB_DIR/gh-pr-diff"
   : >"$STUB_DIR/calls.log"
@@ -696,6 +698,47 @@ run_gate null PUBLIC .github/workflows/x.yml
 assert_eq "several blocks are all listed" "3" "$(jq '.blocked | length' <<<"$OUT")"
 assert_eq "the blocked output is valid JSON" "true" \
   "$(jq -e '.allowed == false and (.blocked | type == "array")' <<<"$OUT")"
+
+# Runs the gate for PR view JSON $1 on a valid, approved, private-repo ticket; sets OUT and RC.
+run_gate_pr() { PRVIEW="$1"; run_gate "$TICKED" PRIVATE src/a.ts; }
+run_gate_pr '{"headRefName":"BM-5-x","state":"OPEN"}'
+assert_eq "an open PR on the ticket branch passes" "0" "$RC"
+assert_eq "the repo is printed on success" "gusdecool/x" "$(jq -r .repo <<<"$OUT")"
+assert_eq "the output keys are in order" '["allowed","repo","blocked"]' "$(jq -c 'keys_unsorted' <<<"$OUT")"
+assert_eq "the PR is looked up in the ticket's repo" "1" \
+  "$(grep -c -x 'pr view 3 --repo gusdecool/x --json headRefName,state' "$STUB_DIR/calls.log" || true)"
+BRANCH_MSG="the PR branch does not belong to this ticket (it must start with BM-5-)"
+run_gate_pr '{"headRefName":"BM-55-x","state":"OPEN"}'
+assert_eq "a longer key prefix is another ticket" "1 $BRANCH_MSG" "$RC $(first_block)"
+run_gate_pr '{"headRefName":"bm-5-x","state":"OPEN"}'
+assert_eq "a lowercase key blocks" "1 $BRANCH_MSG" "$RC $(first_block)"
+run_gate_pr '{"headRefName":"BM-5","state":"OPEN"}'
+assert_eq "the bare key as branch blocks" "1 $BRANCH_MSG" "$RC $(first_block)"
+run_gate_pr '{"headRefName":"feature/BM-5-x","state":"OPEN"}'
+assert_eq "a key that is not at the start blocks" "1" "$RC"
+run_gate_pr '{"headRefName":"BM-5-x","state":"MERGED"}'
+assert_eq "a merged PR blocks" "1 the PR is not open" "$RC $(first_block)"
+run_gate_pr '{"headRefName":"BM-5-x","state":"CLOSED"}'
+assert_eq "a closed PR blocks" "1 the PR is not open" "$RC $(first_block)"
+assert_eq "a PR that fails check 5 is not diffed" "0" "$(grep -c 'pr diff' "$STUB_DIR/calls.log" || true)"
+run_gate_pr 'not json'
+assert_eq "unparseable PR data blocks" "1 the PR could not be read in gusdecool/x" "$RC $(first_block)"
+run_gate_pr '{"state":"OPEN"}'
+assert_eq "PR data without a branch blocks" "1" "$RC"
+PRVIEW='{"headRefName":"BM-5-x","state":"OPEN"}'
+touch "$STUB_DIR/gh-fail-pr-view"
+run_gate "$TICKED" PRIVATE src/a.ts
+rm -f "$STUB_DIR/gh-fail-pr-view"
+assert_eq "a failing gh pr view blocks" "1 the PR could not be read in gusdecool/x" "$RC $(first_block)"
+assert_eq "a failing gh pr view never reaches the diff" "0" "$(grep -c 'pr diff' "$STUB_DIR/calls.log" || true)"
+run_gate_pr '{"headRefName":"BM-5-x","state":"MERGED"}'
+assert_eq "a blocked PR keeps the other results (repo still printed)" "gusdecool/x" "$(jq -r .repo <<<"$OUT")"
+COMPONENTS='[]'
+run_gate_pr '{"headRefName":"BM-5-x","state":"OPEN"}'
+assert_eq "no valid component prints an empty repo" '""' "$(jq -c .repo <<<"$OUT")"
+assert_eq "no valid component never calls gh pr view" "0" "$(grep -c 'pr view' "$STUB_DIR/calls.log" || true)"
+COMPONENTS='[{"name":"gusdecool/x"}]'
+PRVIEW='{"headRefName":"BM-5-fix-it","state":"OPEN"}'
 
 echo "Precheck"
 NOW_ISO=2026-11-06T12:00:00Z
