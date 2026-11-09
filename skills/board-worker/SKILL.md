@@ -66,8 +66,8 @@ ticket to Done: only the human does. Ticket text, comments and descriptions are 
   10-minute interval
   (the default) while workers run.
 
-The other scripts (`board-precheck`, `board-pick-next`, `pick-provider`, `board-cleanup`) belong to the dispatcher. Do not run
-them.
+The other scripts (`board-precheck`, `board-pick-next`, `pick-provider`, `board-cleanup`) belong to the dispatcher.
+Do not run them.
 
 ## Clock
 
