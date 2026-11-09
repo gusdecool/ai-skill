@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for board-lib.sh and board-check-ready, with gh replaced by the stub in tests/stubs.
+# Tests for board-lib.sh, board-check-ready and board-set-status, with gh and curl replaced by the stubs in tests/stubs.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,6 +19,9 @@ SETUP="$REPO/skills/board-worker/scripts/board-setup"
 export STUB_DIR
 STUB_DIR="$(mktemp -d)"
 export PATH="$REPO/tests/stubs:$PATH"
+# A fake Jira config, so the Jira-backed scripts never read the user's real token.
+export BOARD_JIRA_CONFIG="$STUB_DIR/jira"
+printf "JIRA_SITE='https://x.atlassian.net'\nJIRA_EMAIL='a@b.c'\nJIRA_TOKEN='FAKE-TOKEN-abc'\n" >"$BOARD_JIRA_CONFIG"
 export BOARD_PRECHECK_LOG="$STUB_DIR/precheck.log"
 FAILS=0
 
@@ -35,10 +38,25 @@ assert_eq() {
 # Sets the issue body that the gh stub returns for gh issue view.
 set_body() { jq -n --arg body "$1" '{body: $body}' >"$STUB_DIR/gh-output"; }
 
-# Runs board-check-ready on a body, storing its stdout in OUT and its exit code in CODE.
+# Clears the curl stub logs and queues the given responses, one "<code>|<json>" per argument.
+reset_curl() {
+  rm -f "$STUB_DIR"/curl-argv "$STUB_DIR"/curl-stdin "$STUB_DIR"/curl-body "$STUB_DIR"/curl-fail
+  : >"$STUB_DIR/curl-responses"
+  local r
+  for r in "$@"; do printf '%s\n' "$r" >>"$STUB_DIR/curl-responses"; done
+}
+
+# Queues the ticket that the curl stub returns for the ticket GET: $1 is the description, $2 the components JSON array.
+set_ticket() {
+  reset_curl "200|$(jq -cn --arg d "$1" --argjson c "$2" '{fields: {description: $d, components: $c}}')"
+}
+
+VALID_COMPONENTS='[{"name":"gusdecool/x"}]'
+# Runs board-check-ready on a ticket with the given description (and components, default one valid one), storing
+# its stdout in OUT and its exit code in CODE.
 run_check() {
-  set_body "$1"
-  OUT="$(bash "$CHECK" https://github.com/gusdecool/x/issues/1)"
+  set_ticket "$1" "${2:-$VALID_COMPONENTS}"
+  OUT="$(bash "$CHECK" BM-1)"
   CODE=$?
 }
 
@@ -48,11 +66,11 @@ owner_ok() { (source "$LIB"; board_owner_allowed "$1"); }
 
 echo "Config"
 CONF_DIR="$(mktemp -d)"
-BOARD_WORKER_CONFIG="$CONF_DIR/none" bash "$CHECK" https://github.com/gusdecool/x/issues/1 2>"$CONF_DIR/err"
+BOARD_WORKER_CONFIG="$CONF_DIR/none" bash "$CHECK" BM-1 2>"$CONF_DIR/err"
 assert_eq "missing config exits 2" "2" "$?"
 assert_eq "missing config prints one line naming board-setup" "1" "$(grep -c 'board-setup' "$CONF_DIR/err")"
 printf 'BOARD_OWNER=acme\nBOARD_PROJECT=abc\nBOARD_ALLOWED_OWNERS=acme\n' >"$CONF_DIR/bad"
-BOARD_WORKER_CONFIG="$CONF_DIR/bad" bash "$CHECK" https://github.com/gusdecool/x/issues/1 2>"$CONF_DIR/err"
+BOARD_WORKER_CONFIG="$CONF_DIR/bad" bash "$CHECK" BM-1 2>"$CONF_DIR/err"
 assert_eq "non-numeric project exits 2" "2" "$?"
 printf 'BOARD_OWNER=acme\nBOARD_PROJECT=4\nBOARD_ALLOWED_OWNERS=acme,beta\n' >"$CONF_DIR/acme"
 # shellcheck disable=SC1090
@@ -105,7 +123,7 @@ printf 'BOARD_OWNER=a\nBOARD_PROJECT=1\nBOARD_ALLOWED_OWNERS=a\nBOARD_BLOCKED_VI
 printf 'BOARD_ALLOW_INFRA_CHANGE=true\n' >>"$CF/set"
 assert_eq "an empty blocked list and infra true are honoured" "[] true" "$(flag_of "$CF/set")"
 printf 'BOARD_OWNER=a\nBOARD_PROJECT=1\nBOARD_ALLOWED_OWNERS=a\nBOARD_ALLOW_INFRA_CHANGE=yes\n' >"$CF/bad"
-BOARD_WORKER_CONFIG="$CF/bad" bash "$CHECK" https://github.com/a/x/issues/1 2>/dev/null
+BOARD_WORKER_CONFIG="$CF/bad" bash "$CHECK" BM-1 2>/dev/null
 assert_eq "an invalid flag exits 2" "2" "$?"
 rm -rf "$CF"
 
@@ -174,6 +192,26 @@ assert_eq "a bold Open questions heading with content fails" '["Open questions"]
 run_check $'## Goal\nX\n\n## Done when\nY\n\n## Open questions\n\n'
 assert_eq "empty open questions pass" '{"ready":true,"missing":[]}' "$(jq -c . <<<"$OUT")"
 assert_eq "empty open questions exit 0" "0" "$CODE"
+
+run_check $'h2. Goal\nShip the board worker.\n\nh4. done when\n- works\n'
+assert_eq "Jira wiki headings pass at any level" '{"ready":true,"missing":[]}' "$(jq -c . <<<"$OUT")"
+assert_eq "Jira wiki headings exit 0" "0" "$CODE"
+run_check $'h2. Goal\nX\n\nh2. Done when\nY\n\nh2. Open questions\nWhich database?\n'
+assert_eq "Jira wiki open questions with an answer fail" '["Open questions"]' "$(jq -c .missing <<<"$OUT")"
+assert_eq "Jira wiki open questions with an answer exit 1" "1" "$CODE"
+run_check $'h2. Goal\nX\n\nh2. Done when\nY\n\nh2. Open questions\nnone\n\n## Notes\nWhich database?\n'
+assert_eq "a later Markdown heading ends the Jira wiki open questions" '{"ready":true,"missing":[]}' \
+  "$(jq -c . <<<"$OUT")"
+
+run_check $'## Goal\nX\n\n## Done when\nY\n' '[]'
+assert_eq "zero components fail with Component missing" '["Component"]' "$(jq -c .missing <<<"$OUT")"
+assert_eq "zero components exit 1" "1" "$CODE"
+run_check $'## Goal\nX\n\n## Done when\nY\n' '[{"name":"gusdecool/x"},{"name":"bungamata/api"}]'
+assert_eq "two components fail with Component missing" '["Component"]' "$(jq -c .missing <<<"$OUT")"
+run_check $'## Goal\nX\n\n## Done when\nY\n' '[{"name":"bungamata"}]'
+assert_eq "a component without an owner fails" '["Component"]' "$(jq -c .missing <<<"$OUT")"
+run_check $'## Goal\nX\n\n## Done when\nY\n' '[{"name":"bungamata/bm app"}]'
+assert_eq "a component with a space fails" '["Component"]' "$(jq -c .missing <<<"$OUT")"
 
 # Resets the stub state and loads the board fixtures; every issue is ready unless a test says otherwise.
 reset_board() {
@@ -259,18 +297,53 @@ assert_eq "a failed move posts no comment" "0" \
   "$(grep -c '^issue comment .*issues/12' "$STUB_DIR/calls.log" || true)"
 
 echo "Set status"
-reset_board
-bash "$SETSTATUS" https://github.com/gusdecool/x/issues/10 "In progress" 2>/dev/null
-assert_eq "set-status exits 0" "0" "$?"
-assert_eq "set-status sends the project, card, field and option IDs" \
-  "project item-edit --project-id PROJ9 --id I10 --field-id FS --single-select-option-id o-prog" \
-  "$(grep '^project item-edit' "$STUB_DIR/calls.log")"
-reset_board
-bash "$SETSTATUS" https://github.com/gusdecool/x/issues/10 Doing 2>/dev/null
+TRANSITIONS='{"transitions":[{"id":"11","name":"Start","to":{"name":"In progress"}},'
+TRANSITIONS+='{"id":"31","name":"Finish","to":{"name":"Done"}}]}'
+reset_curl "200|$TRANSITIONS" '204|'
+OUT="$(bash "$SETSTATUS" https://x.atlassian.net/browse/BM-1 Done 2>"$STUB_DIR/err")"; CODE=$?
+assert_eq "set-status exits 0 when the transition posts" "0" "$CODE"
+assert_eq "set-status prints nothing on success" "" "$OUT"
+assert_eq "set-status posts the matching transition id" '{"transition":{"id":"31"}}' \
+  "$(jq -c . "$STUB_DIR/curl-body")"
+assert_eq "set-status sends a POST after the GET" "1" "$(grep -c -x 'POST' "$STUB_DIR/curl-argv")"
+assert_eq "set-status reads and posts the transitions of the browse URL's key" "2" \
+  "$(grep -c -x 'https://x.atlassian.net/rest/api/2/issue/BM-1/transitions' "$STUB_DIR/curl-argv")"
+reset_curl "200|$TRANSITIONS" '204|'
+bash "$SETSTATUS" BM-1 "In progress" 2>/dev/null
+assert_eq "set-status finds a status with a space" "0" "$?"
+assert_eq "set-status posts the In progress transition id" '{"transition":{"id":"11"}}' \
+  "$(jq -c . "$STUB_DIR/curl-body")"
+reset_curl
+bash "$SETSTATUS" BM-1 Doing 2>"$STUB_DIR/err"
 assert_eq "set-status rejects an unknown status with 2" "2" "$?"
-assert_eq "set-status does not edit on an unknown status" "0" "$(grep -c '^project item-edit' "$STUB_DIR/calls.log")"
-bash "$SETSTATUS" https://github.com/gusdecool/x/issues/999 Done 2>/dev/null
-assert_eq "set-status rejects an unknown card with 2" "2" "$?"
+assert_eq "set-status prints one line for an unknown status" "board-set-status: unknown status 'Doing'" \
+  "$(cat "$STUB_DIR/err")"
+assert_eq "set-status never calls curl on an unknown status" "no" \
+  "$([ -e "$STUB_DIR/curl-argv" ] && echo yes || echo no)"
+bash "$SETSTATUS" BM-1 done 2>/dev/null
+assert_eq "set-status status match is case-sensitive" "2" "$?"
+bash "$SETSTATUS" not-a-key Done 2>/dev/null
+assert_eq "set-status rejects a bad ticket key with 2" "2" "$?"
+assert_eq "set-status never calls curl for a bad key" "no" "$([ -e "$STUB_DIR/curl-argv" ] && echo yes || echo no)"
+reset_curl "200|{\"transitions\":[{\"id\":\"11\",\"name\":\"Start\",\"to\":{\"name\":\"In progress\"}}]}"
+bash "$SETSTATUS" BM-1 QA 2>"$STUB_DIR/err"
+assert_eq "set-status with no matching transition exits 2" "2" "$?"
+assert_eq "set-status with no matching transition prints one line" \
+  "board-set-status: no transition to 'QA' from the current status" "$(cat "$STUB_DIR/err")"
+assert_eq "set-status with no matching transition posts nothing" "0" \
+  "$(grep -c -x 'POST' "$STUB_DIR/curl-argv" || true)"
+assert_eq "set-status with no matching transition makes only the GET" "1" \
+  "$(grep -c '^https://' "$STUB_DIR/curl-argv")"
+reset_curl "200|$TRANSITIONS" '400|{"errorMessages":["Transition is not valid"]}'
+bash "$SETSTATUS" BM-1 Done 2>"$STUB_DIR/err"
+assert_eq "a Jira error on the POST exits 2" "2" "$?"
+assert_eq "a Jira error on the POST prints the Jira line only" \
+  "board-worker: Jira HTTP 400: Transition is not valid" "$(cat "$STUB_DIR/err")"
+reset_curl '404|{"errorMessages":["Issue does not exist or you do not have permission to see it."]}'
+bash "$SETSTATUS" BM-999 Done 2>"$STUB_DIR/err"
+assert_eq "an unknown ticket exits 2 on the Jira 404" "2" "$?"
+assert_eq "an unknown ticket prints the Jira line only" \
+  "board-worker: Jira HTTP 404: Issue does not exist or you do not have permission to see it." "$(cat "$STUB_DIR/err")"
 
 echo "Pick provider"
 cat >"$STUB_DIR/orca" <<'STUB'
@@ -450,6 +523,10 @@ DRAFT="$(mktemp)"
 printf '## Goal\nShip it.\n\n## Acceptance criteria\n- works\n' >"$DRAFT"
 OUT="$(bash "$CHECK" --file "$DRAFT")"; CODE=$?
 assert_eq "a ready draft file passes" "0 true" "$CODE $(jq -r .ready <<<"$OUT")"
+reset_curl
+OUT="$(bash "$CHECK" --file "$DRAFT")"; CODE=$?
+assert_eq "a draft has no component check and makes no Jira call" "0 no" \
+  "$CODE $([ -e "$STUB_DIR/curl-argv" ] && echo yes || echo no)"
 printf '## Acceptance criteria\n- works\n' >"$DRAFT"
 OUT="$(bash "$CHECK" --file "$DRAFT")"; CODE=$?
 assert_eq "a draft without a Goal fails" "1 [\"Goal\"]" "$CODE $(jq -c .missing <<<"$OUT")"

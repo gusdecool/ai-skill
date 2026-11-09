@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Moves an issue's card on the BM board to a Status column.
-# Usage: board-set-status <issue-url> <status>   (Backlog, HITL, Todo, In progress, QA or Done)
-# Exits 0 on success, 2 on a bad status, an unknown card or any gh failure.
+# Moves a Jira ticket to a board status by posting the workflow transition that leads to it.
+# Usage: board-set-status <ticket-key-or-browse-url> <status>   (Backlog, HITL, Todo, "In progress", QA or Done)
+# Exits 0 on success, 2 on a bad status, a bad ticket, no matching transition or any Jira failure.
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
@@ -9,24 +9,25 @@ source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
 # Prints an error and exits 2.
 die() { echo "board-set-status: $*" >&2; exit 2; }
 
-[ "$#" -eq 2 ] || die "usage: board-set-status <issue-url> <status>"
-url="$1"
+[ "$#" -eq 2 ] || die "usage: board-set-status <ticket-key-or-browse-url> <status>"
+arg="$1"
 status="$2"
+# Rejects anything but the six board statuses before any network call.
+case "$status" in
+  Backlog | HITL | Todo | "In progress" | QA | Done) ;;
+  *) die "unknown status '$status'" ;;
+esac
 
-# Reads the Status field and its option IDs from the board.
-fields="$(gh project field-list "$BOARD_PROJECT" --owner "$BOARD_OWNER" --format json)" || die "cannot read fields"
-field_id="$(jq -r '.fields[] | select(.name == "Status") | .id' <<<"$fields")"
-option_id="$(jq -r --arg s "$status" \
-  '.fields[] | select(.name == "Status") | .options[] | select(.name == $s) | .id' <<<"$fields")"
-[ -n "$field_id" ] || die "the board has no Status field"
-[ -n "$option_id" ] || die "unknown status '$status'"
+# Loads the Jira config first so a browse URL is checked against the configured site.
+jira_load_config || exit 2
+key="$(jira_key "$arg")" || die "not a ticket key or URL: $arg"
 
-# Finds the card of this issue on the board.
-items="$(board_items)" || die "cannot list the board"
-item_id="$(jq -r --arg u "$url" '.items[] | select(.content.url == $u) | .id' <<<"$items" | head -n 1)"
-[ -n "$item_id" ] || die "no card for $url"
+# Lists the transitions open from the current status and picks the one that ends in the target status.
+transitions="$(jira_api GET "/rest/api/2/issue/$key/transitions")" || exit 2
+id="$(jq -r --arg s "$status" '.transitions[] | select(.to.name == $s) | .id' <<<"$transitions" | head -n 1)" \
+  || die "cannot read the transitions of $key"
+[ -n "$id" ] || die "no transition to '$status' from the current status"
 
-project_id="$(gh project view "$BOARD_PROJECT" --owner "$BOARD_OWNER" --format json | jq -r '.id')" \
-  || die "cannot read the project"
-gh project item-edit --project-id "$project_id" --id "$item_id" --field-id "$field_id" \
-  --single-select-option-id "$option_id" >/dev/null || die "cannot update the card"
+# Posts the transition; jira_api has already printed any failure.
+payload="$(jq -n --arg id "$id" '{transition: {id: $id}}')" || die "cannot build the transition"
+jira_api POST "/rest/api/2/issue/$key/transitions" "$payload" >/dev/null || exit 2

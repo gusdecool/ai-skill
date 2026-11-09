@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Checks that an issue body has the sections the board worker needs before it starts work.
-# Usage: board-check-ready <issue-url> | board-check-ready --file <draft.md>   (a draft is read from the file)
-# Prints {"ready":bool,"missing":[...]}; exits 0 when ready, 1 when not, 2 when the issue cannot be read.
+# Checks that a Jira ticket or a draft has the sections the board worker needs before it starts work.
+# Usage: board-check-ready <ticket-key-or-browse-url> | board-check-ready --file <draft.md>
+# A draft is read from the file and has no component check.
+# Prints {"ready":bool,"missing":[...]}; exits 0 when ready, 1 when not, 2 when the ticket cannot be read.
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
@@ -9,18 +10,20 @@ source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
 # Prints an error and exits 2.
 die() { echo "board-check-ready: $*" >&2; exit 2; }
 
-# Exits 0 when the issue body has a heading matching the case-insensitive pattern: "## Goal", "## Goal:" or "**Goal**".
+# Exits 0 when the text has a heading matching the case-insensitive pattern in Markdown, bold or Jira wiki form,
+# with an optional trailing colon: "## Goal", "**Goal:**" or "h2. Goal".
 has_heading() {
-  grep -qiE "^(#{1,6}[[:space:]]+($1)[[:space:]]*:?|\*\*($1):?\*\*:?)[[:space:]]*\$" <<<"$text"
+  local re="^(#{1,6}[[:space:]]+|h[1-6]\.[[:space:]]+)($1)[[:space:]]*:?[[:space:]]*\$|^\*\*($1):?\*\*:?[[:space:]]*\$"
+  grep -qiE "$re" <<<"$text"
 }
 
 # Prints the lines under the Open questions heading, skipping blanks, placeholders (none, n/a, -, an em dash) and
-# HTML comments.
+# HTML comments. The section ends at the next heading in Markdown, bold or Jira wiki form.
 open_questions() {
   awk '
     { line = tolower($0); gsub(/^[ \t]+|[ \t]+$/, "", line) }
-    line ~ /^(#+[ \t]+open questions:?|\*\*open questions:?\*\*:?)$/ { inside = 1; next }
-    line ~ /^#+[ \t]/ || line ~ /^\*\*[^*]+\*\*:?$/ { inside = 0 }
+    line ~ /^(#+[ \t]+|h[1-6]\.[ \t]+)open questions:?$/ || line ~ /^\*\*open questions:?\*\*:?$/ { inside = 1; next }
+    line ~ /^#+[ \t]/ || line ~ /^h[1-6]\.[ \t]/ || line ~ /^\*\*[^*]+\*\*:?$/ { inside = 0 }
     !inside { next }
     comment { if (line ~ /-->$/) comment = 0; next }
     line ~ /^<!--/ { if (line !~ /-->$/) comment = 1; next }
@@ -29,16 +32,22 @@ open_questions() {
   ' <<<"$text"
 }
 
+ticket_mode=true
 if [ "$#" -eq 2 ] && [ "$1" = "--file" ]; then
   # Reads a draft from a file and drops CR characters so CRLF text matches the same patterns.
   [ -r "$2" ] || die "cannot read $2"
   text="$(tr -d '\r' <"$2")"
+  ticket_mode=false
 else
-  [ "$#" -eq 1 ] || die "usage: board-check-ready <issue-url> | --file <draft.md>"
-  url="$1"
-  # Reads the issue body and drops CR characters so CRLF bodies match the same patterns.
-  json="$(gh issue view "$url" --json body)" || die "cannot read $url"
-  text="$(jq -r '.body // ""' <<<"$json" | tr -d '\r')" || die "cannot parse the body of $url"
+  [ "$#" -eq 1 ] || die "usage: board-check-ready <ticket-key-or-browse-url> | --file <draft.md>"
+  # Loads the Jira config first so a browse URL is checked against the configured site.
+  jira_load_config || exit 2
+  key="$(jira_key "$1")" || die "not a ticket key or URL: $1"
+  # Reads the description and components; jira_api has already printed any failure.
+  json="$(jira_api GET "/rest/api/2/issue/$key?fields=description,components")" || exit 2
+  # Drops CR characters so CRLF descriptions match the same patterns.
+  text="$(jq -r '.fields.description // ""' <<<"$json" | tr -d '\r')" || die "cannot parse the description of $key"
+  components="$(jq -c '.fields.components // []' <<<"$json")" || die "cannot parse the components of $key"
 fi
 
 missing=()
@@ -48,6 +57,11 @@ has_heading "goal" || missing+=("Goal")
 has_heading "acceptance criteria|expected behavior|done when" || missing+=("Acceptance criteria")
 # Open questions must have no answers pending.
 [ -z "$(open_questions)" ] || missing+=("Open questions")
+# A ticket needs exactly one component named owner/repo; a draft has no ticket yet, so it is not checked.
+if [ "$ticket_mode" = true ]; then
+  jq -e '(length == 1) and ((.[0].name // "") | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"))' >/dev/null \
+    <<<"$components" || missing+=("Component")
+fi
 
 ready=true
 [ "${#missing[@]}" -eq 0 ] || ready=false
