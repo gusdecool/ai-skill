@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Checks that a human approved the merge of this ticket's PR in the issue itself.
-# Usage: board-check-merge-approved <issue-url>
-# Approved = the issue body has a line "Auto merge: true" AND the issue author is an OWNER, MEMBER or COLLABORATOR of
-# the repo, so the flag cannot come from a stranger. Quoted lines (starting with ">") are ignored.
-# Prints {"approved":bool,"reason":"..."}; exits 0 when approved, 1 when not, 2 when the issue cannot be read.
+# Checks that a human approved the merge of this ticket by ticking its "Auto merge" checkbox field in Jira.
+# Usage: board-check-merge-approved <ticket-key-or-browse-url>
+# Approved = the custom field named "Auto merge" has the option "Yes" ticked. The description and comments are never
+# read, so text written there cannot grant approval; only someone who can edit the field can.
+# Prints {"approved":bool,"reason":"..."}; exits 0 when approved, 1 when not, 2 when the ticket cannot be read.
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
@@ -18,20 +18,25 @@ verdict() {
   exit $?
 }
 
-[ "$#" -eq 1 ] || die "usage: board-check-merge-approved <issue-url>"
-url="$1"
-[[ "$url" =~ ^https://github\.com/([^/]+/[^/]+)/issues/([0-9]+)$ ]] || die "not an issue URL: $url"
+[ "$#" -eq 1 ] || die "usage: board-check-merge-approved <ticket-key-or-browse-url>"
+# Loads the Jira config first so a browse URL is checked against the configured site.
+jira_load_config || exit 2
+key="$(jira_key "$1")" || die "not a ticket key or URL: $1"
 
-# Reads the issue body and the author's association with the repo.
-json="$(gh api "repos/${BASH_REMATCH[1]}/issues/${BASH_REMATCH[2]}")" || die "cannot read $url"
-text="$(jq -r '.body // ""' <<<"$json" | tr -d '\r')" || die "cannot parse the body of $url"
-assoc="$(jq -r '.author_association // ""' <<<"$json")" || die "cannot parse the author of $url"
+# Finds the custom field by name; none or several matches means the approval cannot be decided.
+fields="$(jira_api GET /rest/api/2/field)" || exit 2
+matches="$(jq -r '[.[] | select(.name == "Auto merge" and .custom == true) | .id | tostring] | join("\n")' \
+  <<<"$fields")" || die "cannot parse the field list"
+[ -n "$matches" ] || die "no custom field named 'Auto merge'"
+[ "$(wc -l <<<"$matches")" -eq 1 ] || die "more than one custom field named 'Auto merge'"
+field="$matches"
+[[ "$field" =~ ^customfield_[0-9]+$ ]] || die "unexpected field id: $field"
 
-# The flag must be a plain line, "Auto merge: true", in any case, optionally bold.
-grep -qiE '^[[:space:]]*(\*\*)?auto merge:?(\*\*)?:?[[:space:]]*(\*\*)?true(\*\*)?[[:space:]]*$' <<<"$text" ||
-  verdict false "the issue has no line 'Auto merge: true'"
-# Only someone with write-level standing on the repo may grant it.
-case "$assoc" in
-  OWNER | MEMBER | COLLABORATOR) verdict true "Auto merge: true set by an issue author with association $assoc" ;;
-  *) verdict false "the issue author is '$assoc', not an owner, member or collaborator" ;;
-esac
+# Reads only that field; it is a checkbox, so an array of options, or null when nothing is ticked.
+json="$(jira_api GET "/rest/api/2/issue/$key?fields=$field")" || exit 2
+ticked="$(jq -r --arg f "$field" \
+  '(.fields[$f]) as $v | if ($v | type) == "array" and any($v[]; type == "object" and .value == "Yes")
+   then "yes" else "no" end' <<<"$json")" || die "cannot parse the ticket $key"
+
+[ "$ticked" = yes ] || verdict false "the 'Auto merge' field is not ticked"
+verdict true "the 'Auto merge' field is ticked"

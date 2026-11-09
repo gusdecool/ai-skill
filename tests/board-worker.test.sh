@@ -87,28 +87,55 @@ assert_eq "board-setup without a terminal or flags exits 2" "2" "$?"
 rm -rf "$CONF_DIR"
 
 echo "Merge approval"
-U=https://github.com/gusdecool/x/issues/5
-# Runs the approval check for a body and an author association; sets OUT and RC.
+FIELDS_OK='[{"id":"description","name":"Description","custom":false},'
+FIELDS_OK+='{"id":"customfield_10036","name":"Auto merge","custom":true}]'
+# Queues the field list and the ticket's Auto merge value (a JSON value, default null), runs the approval check on
+# BM-5; sets OUT and RC.
 run_approve() {
-  jq -n --arg body "$1" --arg assoc "$2" '{body: $body, author_association: $assoc}' >"$STUB_DIR/gh-output"
-  OUT="$(bash "$APPROVE" "$U" 2>/dev/null)"; RC=$?
+  reset_curl "200|${2:-$FIELDS_OK}" "200|$(jq -cn --argjson v "${1:-null}" '{fields: {customfield_10036: $v}}')"
+  OUT="$(bash "$APPROVE" BM-5 2>/dev/null)"; RC=$?
 }
-run_approve $'## Goal\nx\n\nAuto merge: true\n' OWNER
-assert_eq "flag plus owner is approved" "0 true" "$RC $(jq -r .approved <<<"$OUT")"
-run_approve $'auto MERGE: **true**\r\n' COLLABORATOR
-assert_eq "case, bold and CRLF still count" "0" "$RC"
-run_approve $'## Goal\nx\n' OWNER
-assert_eq "no flag is not approved" "1" "$RC"
-run_approve $'Auto merge: false\n' OWNER
-assert_eq "Auto merge: false is not approved" "1" "$RC"
-run_approve $'> Auto merge: true\n' OWNER
-assert_eq "a quoted flag is ignored" "1" "$RC"
-run_approve $'Auto merge: true\n' NONE
-assert_eq "flag from a stranger is not approved" "1" "$RC"
-run_approve $'Auto merge: true\n' CONTRIBUTOR
-assert_eq "a contributor is not enough" "1" "$RC"
-bash "$APPROVE" not-a-url 2>/dev/null
-assert_eq "bad URL exits 2" "2" "$?"
+run_approve '[{"value":"Yes","id":"10036"}]'
+assert_eq "a ticked field is approved" "0 true" "$RC $(jq -r .approved <<<"$OUT")"
+assert_eq "the approved reason names the field" "the 'Auto merge' field is ticked" "$(jq -r .reason <<<"$OUT")"
+run_approve
+assert_eq "an absent value is not approved" "1 false" "$RC $(jq -r .approved <<<"$OUT")"
+assert_eq "the not approved reason names the field" "the 'Auto merge' field is not ticked" "$(jq -r .reason <<<"$OUT")"
+run_approve '[]'
+assert_eq "an empty array is not approved" "1" "$RC"
+run_approve '[{"value":"No"}]'
+assert_eq "the option No is not approved" "1" "$RC"
+run_approve '[{"value":"yes"}]'
+assert_eq "the value must be exactly Yes" "1" "$RC"
+run_approve '"Yes"'
+assert_eq "a plain string value is not approved" "1" "$RC"
+run_approve '[{"value":"Yes"}]' '[{"id":"description","name":"Description","custom":false}]'
+assert_eq "a missing Auto merge field exits 2" "2" "$RC"
+run_approve '[{"value":"Yes"}]' \
+  '[{"id":"customfield_1","name":"Auto merge","custom":true},{"id":"customfield_2","name":"Auto merge","custom":true}]'
+assert_eq "two fields named Auto merge exit 2" "2" "$RC"
+run_approve '[{"value":"Yes"}]' '[{"id":"customfield_1","name":"Auto merge","custom":false}]'
+assert_eq "a non-custom field named Auto merge is ignored" "2" "$RC"
+run_approve '[{"value":"Yes"}]' '[{"id":"customfield_10036?x=1","name":"Auto merge","custom":true}]'
+assert_eq "a malformed field id exits 2" "2" "$RC"
+assert_eq "a malformed field id is never used in a ticket request" "0" \
+  "$(grep -c '/rest/api/2/issue' "$STUB_DIR/curl-argv" || true)"
+reset_curl "200|$FIELDS_OK" "200|$(jq -cn '{fields: {customfield_10036: null, description: "Auto merge: true"}}')"
+OUT="$(bash "$APPROVE" BM-5 2>/dev/null)"; RC=$?
+assert_eq "text saying Auto merge: true does not approve" "1" "$RC"
+run_approve '[{"value":"Yes"}]'
+assert_eq "the ticket request asks only for the custom field" "1" \
+  "$(grep -c -x 'https://x.atlassian.net/rest/api/2/issue/BM-5?fields=customfield_10036' "$STUB_DIR/curl-argv" || true)"
+reset_curl "500|{}"
+bash "$APPROVE" BM-5 >/dev/null 2>&1
+assert_eq "a Jira error on the field list exits 2" "2" "$?"
+reset_curl "200|$FIELDS_OK" "500|{}"
+bash "$APPROVE" BM-5 >/dev/null 2>&1
+assert_eq "a Jira error on the ticket exits 2" "2" "$?"
+bash "$APPROVE" not-a-key 2>/dev/null
+assert_eq "a bad key exits 2" "2" "$?"
+bash "$APPROVE" https://evil.example/browse/BM-5 2>/dev/null
+assert_eq "a browse URL on another host exits 2" "2" "$?"
 
 echo "Flags"
 CF="$(mktemp -d)"
@@ -583,34 +610,92 @@ assert_eq "an unreadable file list exits 2" "2" "$?"
 rm -f "$STUB_DIR/gh-fail-pr-diff"
 
 echo "Merge gate"
-G=https://github.com/gusdecool/x/issues/5
-# Runs the merge gate for an approval, author association, visibility and file list; sets OUT and RC.
-run_gate() {
-  jq -n --arg body "$1" --arg assoc "$2" '{body: $body, author_association: $assoc}' >"$STUB_DIR/gh-output"
-  echo "{\"visibility\":\"$3\"}" >"$STUB_DIR/gh-repo-view"
-  printf '%s\n' "${@:4}" >"$STUB_DIR/gh-pr-diff"
-  OUT="$(bash "$GATE" "$G" 3 2>/dev/null)"; RC=$?
+# Runs the merge gate on BM-5 / PR 3. Args: Auto merge value (JSON), visibility, then the PR file list. The ticket
+# has the component in COMPONENTS (default gusdecool/x). Sets OUT and RC.
+COMPONENTS='[{"name":"gusdecool/x"}]'
+# Queues the three Jira answers of a gate run: components, field list, Auto merge value (arg 1, JSON).
+queue_gate() {
+  reset_curl "200|$(jq -cn --argjson c "$COMPONENTS" '{fields: {components: $c}}')" "200|$FIELDS_OK" \
+    "200|$(jq -cn --argjson v "$1" '{fields: {customfield_10036: $v}}')"
 }
-run_gate $'Auto merge: true\n' OWNER PRIVATE src/a.ts
+run_gate() {
+  queue_gate "$1"
+  echo "{\"visibility\":\"$2\"}" >"$STUB_DIR/gh-repo-view"
+  printf '%s\n' "${@:3}" >"$STUB_DIR/gh-pr-diff"
+  : >"$STUB_DIR/calls.log"
+  OUT="$(bash "$GATE" BM-5 3 2>/dev/null)"; RC=$?
+}
+# Prints the first blocked reason of the last gate run.
+first_block() { jq -r '.blocked[0]' <<<"$OUT"; }
+TICKED='[{"value":"Yes"}]'
+run_gate "$TICKED" PRIVATE src/a.ts
 assert_eq "everything in order is allowed" "0 true" "$RC $(jq -r .allowed <<<"$OUT")"
-run_gate $'Auto merge: true\n' OWNER PUBLIC src/a.ts
-assert_eq "a public repo blocks the merge" "1" "$RC"
-run_gate $'Goal only\n' OWNER PRIVATE src/a.ts
-assert_eq "no Auto merge line blocks the merge" "1" "$RC"
-run_gate $'Auto merge: true\n' OWNER PRIVATE .github/workflows/x.yml
+assert_eq "the allowed output has no reasons" "[]" "$(jq -c .blocked <<<"$OUT")"
+COMPONENTS='[{"name":"other/x"}]'
+run_gate "$TICKED" PRIVATE src/a.ts
+assert_eq "an owner outside the allow-list blocks the merge" "1 repo owner is not in the allowed owners" \
+  "$RC $(first_block)"
+COMPONENTS='[{"name":"gusdecool/x"}]'
+run_gate "$TICKED" PUBLIC src/a.ts
+assert_eq "a public repo blocks the merge" "1 repo visibility is blocked by the board-worker config" \
+  "$RC $(first_block)"
+touch "$STUB_DIR/gh-fail-repo-view"
+queue_gate "$TICKED"
+OUT="$(bash "$GATE" BM-5 3 2>/dev/null)"; RC=$?
+rm -f "$STUB_DIR/gh-fail-repo-view"
+assert_eq "an unreadable visibility blocks the merge" "1 repo visibility could not be read" "$RC $(first_block)"
+run_gate null PRIVATE src/a.ts
+assert_eq "an unticked Auto merge blocks the merge" "1 the 'Auto merge' field is not ticked" "$RC $(first_block)"
+reset_curl "200|$(jq -cn --argjson c "$COMPONENTS" '{fields: {components: $c}}')" "500|{}"
+printf '%s\n' src/a.ts >"$STUB_DIR/gh-pr-diff"
+echo '{"visibility":"PRIVATE"}' >"$STUB_DIR/gh-repo-view"
+OUT="$(bash "$GATE" BM-5 3 2>/dev/null)"; RC=$?
+assert_eq "an unreadable approval blocks the merge" "1 approval could not be read" "$RC $(first_block)"
+run_gate "$TICKED" PRIVATE .github/workflows/x.yml
 assert_eq "a CI/CD change blocks the merge" "1" "$RC"
-run_gate $'Auto merge: true\n' OWNER PRIVATE main.tf
+assert_eq "the CI/CD reason lists the path" "true" \
+  "$(jq -r '.blocked[0] | contains("CI/CD") and contains(".github/workflows/x.yml")' <<<"$OUT")"
+run_gate "$TICKED" PRIVATE main.tf
 assert_eq "an infra change blocks by default" "1" "$RC"
-OUT="$(BOARD_WORKER_CONFIG="$FIX/config-infra" bash "$GATE" "$G" 3 2>/dev/null)"; RC=$?
+run_gate "$TICKED" PRIVATE main.tf
+queue_gate "$TICKED"
+OUT="$(BOARD_WORKER_CONFIG="$FIX/config-infra" bash "$GATE" BM-5 3 2>/dev/null)"; RC=$?
 assert_eq "an infra change passes when the flag is true" "0" "$RC"
-printf '%s\n' .github/workflows/x.yml >"$STUB_DIR/gh-pr-diff"
-OUT="$(BOARD_WORKER_CONFIG="$FIX/config-infra" bash "$GATE" "$G" 3 2>/dev/null)"; RC=$?
+run_gate "$TICKED" PRIVATE .github/workflows/x.yml
+queue_gate "$TICKED"
+OUT="$(BOARD_WORKER_CONFIG="$FIX/config-infra" bash "$GATE" BM-5 3 2>/dev/null)"; RC=$?
 assert_eq "a CI/CD change blocks even with the infra flag" "1" "$RC"
-run_gate $'Auto merge: true\n' OWNER PRIVATE src/a.ts
+run_gate "$TICKED" PRIVATE src/a.ts
 touch "$STUB_DIR/gh-fail-pr-diff"
-OUT="$(bash "$GATE" "$G" 3 2>/dev/null)"; RC=$?
-assert_eq "an unreadable file list blocks the merge" "1" "$RC"
+queue_gate "$TICKED"
+OUT="$(bash "$GATE" BM-5 3 2>/dev/null)"; RC=$?
 rm -f "$STUB_DIR/gh-fail-pr-diff"
+assert_eq "an unreadable file list blocks the merge" "1 the PR file list could not be read" "$RC $(first_block)"
+BAD_COMPONENTS=('[]' '[{"name":"gusdecool/x"},{"name":"gusdecool/y"}]' '[{"name":"not a repo"}]' '[{"name":"a/b/c"}]')
+for COMPONENTS in "${BAD_COMPONENTS[@]}"; do
+  run_gate "$TICKED" PRIVATE src/a.ts
+  assert_eq "components $COMPONENTS block with the component reason" \
+    "1 the ticket must have exactly one component named owner/repo" "$RC $(first_block)"
+  assert_eq "components $COMPONENTS never read the PR diff" "0" "$(grep -c 'pr diff' "$STUB_DIR/calls.log" || true)"
+  assert_eq "components $COMPONENTS still run the approval" "3" \
+    "$(grep -c "/rest/api/2/" "$STUB_DIR/curl-argv" || true)"
+done
+COMPONENTS='[]'
+run_gate null PRIVATE src/a.ts
+assert_eq "no component and no approval give two reasons" "2" "$(jq '.blocked | length' <<<"$OUT")"
+COMPONENTS='[{"name":"gusdecool/x"}]'
+reset_curl "500|{}"
+bash "$GATE" BM-5 3 >/dev/null 2>&1
+assert_eq "a Jira error on the components exits 2" "2" "$?"
+run_gate "$TICKED" PRIVATE src/a.ts
+OUT="$(bash "$GATE" BM-5 abc 2>/dev/null)"; RC=$?
+assert_eq "a non-numeric PR number exits 2" "2" "$RC"
+bash "$GATE" not-a-key 3 >/dev/null 2>&1
+assert_eq "a bad key exits 2" "2" "$?"
+run_gate null PUBLIC .github/workflows/x.yml
+assert_eq "several blocks are all listed" "3" "$(jq '.blocked | length' <<<"$OUT")"
+assert_eq "the blocked output is valid JSON" "true" \
+  "$(jq -e '.allowed == false and (.blocked | type == "array")' <<<"$OUT")"
 
 echo "Precheck"
 NOW_ISO=2026-11-06T12:00:00Z
