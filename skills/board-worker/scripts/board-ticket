@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# Jira ticket CLI for the board skills; workers on any provider use it as their only Jira tool.
+# Usage:
+#   board-ticket view <key>                       one JSON object: key, summary, status, priority, component,
+#                                                 components, labels, description, autoMerge, url
+#   board-ticket status <key>                     the status name only
+#   board-ticket comment <key> <text...>          add a comment (the remaining arguments joined by a space)
+#   board-ticket label <key> add|remove <LABEL>   LABEL matches ^[A-Za-z0-9_-]{1,40}$
+#   board-ticket create --summary <s> --component <owner/repo> --description-file <f>
+#                        [--priority Highest|High|Medium|Low|Lowest] [--type Task|Story|Bug]
+#                                                 creates the ticket in the first status (Backlog); prints {key,url}
+#   board-ticket automerge <key>                  ticks the "Auto merge" checkbox. For the board-issue skill after the
+#                                                 user said yes; a BOARD-WORKER session never calls it.
+# Keys may be a key (BM-123) or a browse URL on the configured site. Arguments are data: they are never executed and
+# JSON is built with jq. Exits 0 on success, 2 on bad arguments or a Jira error (one stderr line).
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
+
+# Prints an error and exits 2.
+die() { echo "board-ticket: $*" >&2; exit 2; }
+
+# Prints the usage line and exits 2.
+usage() {
+  die "usage: board-ticket view|status|comment|label|create|automerge ... (see the header of $0)"
+}
+
+# Prints the validated ticket key for an argument, or fails. Needs the Jira config loaded first.
+need_key() {
+  jira_key "${1:-}" || die "not a ticket key or URL: ${1:-}"
+}
+
+# Prints the id of the single custom field named "Auto merge". Returns 1 with one stderr line when the field list
+# cannot be read, or there are no matches, several, or an odd id (callers decide whether that is fatal).
+automerge_field() {
+  local fields matches reason=""
+  fields="$(jira_api GET /rest/api/2/field)" || return 1
+  matches="$(jq -r '[.[] | select(.name == "Auto merge" and .custom == true) | .id | tostring] | join("\n")' \
+    <<<"$fields")" || { echo "board-ticket: cannot parse the field list" >&2; return 1; }
+  if [ -z "$matches" ]; then reason="no custom field named 'Auto merge'"
+  elif [ "$(wc -l <<<"$matches")" -ne 1 ]; then reason="more than one custom field named 'Auto merge'"
+  elif ! [[ "$matches" =~ ^customfield_[0-9]+$ ]]; then reason="unexpected field id: $matches"
+  fi
+  if [ -n "$reason" ]; then echo "board-ticket: $reason" >&2; return 1; fi
+  printf '%s\n' "$matches"
+}
+
+# Prints the ticket as one JSON object. autoMerge is true/false, or null when the field cannot be identified.
+cmd_view() {
+  local key="$1" field="" json list="summary,status,priority,components,labels,description"
+  field="$(automerge_field 2>/dev/null)" || field=""
+  [ -z "$field" ] || list="$list,$field"
+  json="$(jira_api GET "/rest/api/2/issue/$key?fields=$list")" || exit 2
+  jq -c --arg site "$JIRA_SITE" --arg f "$field" '
+    (.fields) as $x
+    | {key: .key, summary: ($x.summary // ""), status: ($x.status.name // ""), priority: ($x.priority.name // ""),
+       component: (($x.components // [])[0].name // ""),
+       components: [($x.components // [])[].name], labels: ($x.labels // []),
+       description: ($x.description // ""),
+       autoMerge: (if $f == "" then null
+                   else ($x[$f]) as $v
+                        | (if ($v | type) == "array" then any($v[]; type == "object" and .value == "Yes")
+                           else false end) end),
+       url: ($site + "/browse/" + .key)}' <<<"$json" || die "cannot parse the ticket $key"
+}
+
+# Prints the status name of the ticket.
+cmd_status() {
+  local json
+  json="$(jira_api GET "/rest/api/2/issue/$1?fields=status")" || exit 2
+  jq -er '.fields.status.name' <<<"$json" || die "cannot read the status of $1"
+}
+
+# Posts a comment; the text is sent as data inside a jq-built JSON body.
+cmd_comment() {
+  local key="$1" text
+  shift
+  text="$*"
+  [ -n "${text//[[:space:]]/}" ] || die "empty comment"
+  jira_api POST "/rest/api/2/issue/$key/comment" "$(jq -n --arg t "$text" '{body: $t}')" >/dev/null || exit 2
+}
+
+# Adds or removes one label. Args: key, add|remove, label.
+cmd_label() {
+  local key="$1" op="${2:-}" label="${3:-}"
+  case "$op" in add | remove) ;; *) usage ;; esac
+  [[ "$label" =~ ^[A-Za-z0-9_-]{1,40}$ ]] || die "invalid label: $label"
+  jira_api PUT "/rest/api/2/issue/$key" "$(jq -n --arg l "$label" --arg op "$op" \
+    '{update: {labels: [{($op): $l}]}}')" >/dev/null || exit 2
+}
+
+# Creates a ticket in the project's first status (Backlog) and prints {key,url}.
+cmd_create() {
+  local summary="" component="" file="" priority="Medium" type="Task" desc body resp key
+  while [ "$#" -gt 0 ]; do
+    [ "$#" -ge 2 ] || usage
+    case "$1" in
+      --summary) summary="$2" ;;
+      --component) component="$2" ;;
+      --description-file) file="$2" ;;
+      --priority) priority="$2" ;;
+      --type) type="$2" ;;
+      *) usage ;;
+    esac
+    shift 2
+  done
+  [ -n "$summary" ] && [ "${#summary}" -le 255 ] || die "summary must be 1 to 255 characters"
+  case "$summary" in *$'\n'* | *$'\r'*) die "summary must not contain newlines" ;; esac
+  [[ "$component" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "component must look like owner/repo"
+  case "$priority" in Highest | High | Medium | Low | Lowest) ;; *) die "invalid priority: $priority" ;; esac
+  case "$type" in Task | Story | Bug) ;; *) die "invalid type: $type" ;; esac
+  [ -n "$file" ] && [ -r "$file" ] || die "cannot read the description file"
+  desc="$(cat "$file")"
+  body="$(jq -n --arg p "$JIRA_PROJECT" --arg s "$summary" --arg c "$component" --arg d "$desc" \
+    --arg pr "$priority" --arg t "$type" \
+    '{fields: {project: {key: $p}, summary: $s, description: $d, issuetype: {name: $t},
+               components: [{name: $c}], priority: {name: $pr}}}')"
+  resp="$(jira_api POST /rest/api/2/issue "$body")" || exit 2
+  key="$(jq -er '.key' <<<"$resp")" || die "Jira did not return a key"
+  jq -cn --arg k "$key" --arg u "$JIRA_SITE/browse/$key" '{key: $k, url: $u}'
+}
+
+# Ticks the "Auto merge" checkbox of the ticket.
+cmd_automerge() {
+  local field
+  field="$(automerge_field)" || exit 2
+  jira_api PUT "/rest/api/2/issue/$1" "$(jq -n --arg f "$field" '{fields: {($f): [{value: "Yes"}]}}')" \
+    >/dev/null || exit 2
+}
+
+[ "$#" -ge 1 ] || usage
+cmd="$1"
+shift
+jira_load_config || exit 2
+case "$cmd" in
+  view | status | automerge)
+    [ "$#" -eq 1 ] || usage
+    key="$(need_key "$1")"
+    "cmd_$cmd" "$key"
+    ;;
+  comment)
+    [ "$#" -ge 2 ] || usage
+    key="$(need_key "$1")"
+    shift
+    cmd_comment "$key" "$@"
+    ;;
+  label)
+    [ "$#" -eq 3 ] || usage
+    key="$(need_key "$1")"
+    cmd_label "$key" "$2" "$3"
+    ;;
+  create) cmd_create "$@" ;;
+  *) usage ;;
+esac

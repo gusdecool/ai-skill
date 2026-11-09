@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for board-lib.sh and board-check-ready, with gh replaced by the stub in tests/stubs.
+# Tests for board-lib.sh, board-check-ready and board-set-status, with gh and curl replaced by the stubs in tests/stubs.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,6 +19,9 @@ SETUP="$REPO/skills/board-worker/scripts/board-setup"
 export STUB_DIR
 STUB_DIR="$(mktemp -d)"
 export PATH="$REPO/tests/stubs:$PATH"
+# A fake Jira config, so the Jira-backed scripts never read the user's real token.
+export BOARD_JIRA_CONFIG="$STUB_DIR/jira"
+printf "JIRA_SITE='https://x.atlassian.net'\nJIRA_EMAIL='a@b.c'\nJIRA_TOKEN='FAKE-TOKEN-abc'\n" >"$BOARD_JIRA_CONFIG"
 export BOARD_PRECHECK_LOG="$STUB_DIR/precheck.log"
 FAILS=0
 
@@ -32,13 +35,26 @@ assert_eq() {
   if [ "$2" != "$3" ]; then echo "FAIL: $1 (expected '$2', got '$3')"; FAILS=$((FAILS + 1)); else echo "ok: $1"; fi
 }
 
-# Sets the issue body that the gh stub returns for gh issue view.
-set_body() { jq -n --arg body "$1" '{body: $body}' >"$STUB_DIR/gh-output"; }
+# Clears the curl stub logs and queues the given responses, one "<code>|<json>" per argument.
+reset_curl() {
+  rm -f "$STUB_DIR"/curl-argv "$STUB_DIR"/curl-stdin "$STUB_DIR"/curl-body "$STUB_DIR"/curl-fail "$STUB_DIR"/curl-calls
+  rm -rf "$STUB_DIR/curl-routes"
+  : >"$STUB_DIR/curl-responses"
+  local r
+  for r in "$@"; do printf '%s\n' "$r" >>"$STUB_DIR/curl-responses"; done
+}
 
-# Runs board-check-ready on a body, storing its stdout in OUT and its exit code in CODE.
+# Queues the ticket that the curl stub returns for the ticket GET: $1 is the description, $2 the components JSON array.
+set_ticket() {
+  reset_curl "200|$(jq -cn --arg d "$1" --argjson c "$2" '{fields: {description: $d, components: $c}}')"
+}
+
+VALID_COMPONENTS='[{"name":"gusdecool/x"}]'
+# Runs board-check-ready on a ticket with the given description (and components, default one valid one), storing
+# its stdout in OUT and its exit code in CODE.
 run_check() {
-  set_body "$1"
-  OUT="$(bash "$CHECK" https://github.com/gusdecool/x/issues/1)"
+  set_ticket "$1" "${2:-$VALID_COMPONENTS}"
+  OUT="$(bash "$CHECK" BM-1)"
   CODE=$?
 }
 
@@ -48,49 +64,117 @@ owner_ok() { (source "$LIB"; board_owner_allowed "$1"); }
 
 echo "Config"
 CONF_DIR="$(mktemp -d)"
-BOARD_WORKER_CONFIG="$CONF_DIR/none" bash "$CHECK" https://github.com/gusdecool/x/issues/1 2>"$CONF_DIR/err"
+BOARD_WORKER_CONFIG="$CONF_DIR/none" bash "$CHECK" BM-1 2>"$CONF_DIR/err"
 assert_eq "missing config exits 2" "2" "$?"
 assert_eq "missing config prints one line naming board-setup" "1" "$(grep -c 'board-setup' "$CONF_DIR/err")"
-printf 'BOARD_OWNER=acme\nBOARD_PROJECT=abc\nBOARD_ALLOWED_OWNERS=acme\n' >"$CONF_DIR/bad"
-BOARD_WORKER_CONFIG="$CONF_DIR/bad" bash "$CHECK" https://github.com/gusdecool/x/issues/1 2>"$CONF_DIR/err"
-assert_eq "non-numeric project exits 2" "2" "$?"
-printf 'BOARD_OWNER=acme\nBOARD_PROJECT=4\nBOARD_ALLOWED_OWNERS=acme,beta\n' >"$CONF_DIR/acme"
+printf 'BOARD_ALLOWED_OWNERS=acme,bad owner\n' >"$CONF_DIR/bad"
+BOARD_WORKER_CONFIG="$CONF_DIR/bad" bash "$CHECK" BM-1 2>"$CONF_DIR/err"
+assert_eq "an invalid allowed owner exits 2" "2" "$?"
+printf 'BOARD_OWNER=acme\n' >"$CONF_DIR/noallowed"
+BOARD_WORKER_CONFIG="$CONF_DIR/noallowed" bash "$CHECK" BM-1 2>"$CONF_DIR/err"
+assert_eq "a config without BOARD_ALLOWED_OWNERS exits 2" "2" "$?"
+printf 'BOARD_ALLOWED_OWNERS=acme,beta\n' >"$CONF_DIR/acme"
 # shellcheck disable=SC1090
 assert_eq "config values drive the allow-list" "0 1" \
   "$(BOARD_WORKER_CONFIG="$CONF_DIR/acme" bash -c \
     'source "$1"; board_owner_allowed beta/x; a=$?; board_owner_allowed bungamata/x; echo "$a $?"' _ "$LIB")"
-BOARD_WORKER_CONFIG="$CONF_DIR/new/config" bash "$SETUP" --owner acme --project 4 --allowed acme,beta >/dev/null
-assert_eq "board-setup writes the config" "$(cat "$CONF_DIR/acme")" "$(cat "$CONF_DIR/new/config")"
-BOARD_WORKER_CONFIG="$CONF_DIR/new2" bash "$SETUP" --owner acme --project x --allowed acme 2>/dev/null
-assert_eq "board-setup rejects a bad project" "2" "$?"
+printf 'BOARD_OWNER=old\nBOARD_PROJECT=9\nBOARD_ALLOWED_OWNERS=acme,beta\n' >"$CONF_DIR/old"
+assert_eq "old BOARD_OWNER and BOARD_PROJECT lines are ignored" "0 1" \
+  "$(BOARD_WORKER_CONFIG="$CONF_DIR/old" bash -c \
+    'source "$1"; board_owner_allowed beta/x; a=$?; board_owner_allowed old/x; echo "$a $?"' _ "$LIB")"
+# Runs board-setup against a fresh Jira answer; sets OUT (stdout), ERR (stderr) and CODE.
+run_setup() {
+  OUT="$(BOARD_WORKER_CONFIG="$1" bash "$SETUP" "${@:2}" 2>"$CONF_DIR/err" </dev/null)"; CODE=$?
+  ERR="$(cat "$CONF_DIR/err")"
+}
+reset_curl '200|{"displayName":"Budi A"}'
+run_setup "$CONF_DIR/new/config" --allowed acme,beta
+assert_eq "board-setup writes only BOARD_ALLOWED_OWNERS" "BOARD_ALLOWED_OWNERS=acme,beta" \
+  "$(cat "$CONF_DIR/new/config")"
+assert_eq "board-setup reports the Jira user and exits 0" \
+  "0 board-setup: wrote $CONF_DIR/new/config; Jira connected as Budi A" "$CODE $OUT"
+assert_eq "board-setup never prints the token" "0" "$(grep -c 'FAKE-TOKEN' <<<"$OUT$ERR")"
+assert_eq "board-setup asks Jira who am I" "GET https://x.atlassian.net/rest/api/2/myself " \
+  "$(cat "$STUB_DIR/curl-calls")"
+run_setup "$CONF_DIR/new1" --owner acme --allowed acme
+assert_eq "board-setup rejects --owner with exit 2" "2" "$CODE"
+assert_eq "board-setup prints a usage line for --owner" "1" "$(grep -c 'usage: board-setup' <<<"$ERR")"
+assert_eq "board-setup writes nothing for --owner" "no" "$([ -e "$CONF_DIR/new1" ] && echo yes || echo no)"
+run_setup "$CONF_DIR/new1" --project 4 --allowed acme
+assert_eq "board-setup rejects --project with exit 2" "2" "$CODE"
+run_setup "$CONF_DIR/new2" --allowed 'acme,bad owner'
+assert_eq "board-setup rejects a bad owner" "2" "$CODE"
 assert_eq "board-setup writes nothing on bad input" "no" "$([ -e "$CONF_DIR/new2" ] && echo yes || echo no)"
-BOARD_WORKER_CONFIG="$CONF_DIR/new3" bash "$SETUP" </dev/null 2>/dev/null
-assert_eq "board-setup without a terminal or flags exits 2" "2" "$?"
+OUT="$(BOARD_WORKER_CONFIG="$CONF_DIR/new3" bash "$SETUP" </dev/null 2>&1)"
+assert_eq "board-setup without a terminal or flag exits 2" "2" "$?"
+OUT="$(BOARD_JIRA_CONFIG="$CONF_DIR/nojira" BOARD_WORKER_CONFIG="$CONF_DIR/new4" bash "$SETUP" --allowed acme 2>&1)"
+assert_eq "board-setup with no Jira config exits 2" "2" "$?"
+assert_eq "board-setup names the missing Jira config" "1" \
+  "$(grep -c 'Jira config missing or invalid at .*nojira' <<<"$OUT")"
+assert_eq "board-setup keeps the config when Jira config is missing" "BOARD_ALLOWED_OWNERS=acme" \
+  "$(cat "$CONF_DIR/new4")"
+printf "JIRA_SITE='http://bad'\nJIRA_EMAIL='a@b.c'\nJIRA_TOKEN='FAKE-TOKEN-abc'\n" >"$CONF_DIR/badjira"
+OUT="$(BOARD_JIRA_CONFIG="$CONF_DIR/badjira" BOARD_WORKER_CONFIG="$CONF_DIR/new5" bash "$SETUP" --allowed acme 2>&1)"
+assert_eq "board-setup with an invalid Jira config exits 2" "2" "$?"
+assert_eq "board-setup does not leak the token for an invalid config" "0" "$(grep -c 'FAKE-TOKEN' <<<"$OUT")"
+reset_curl '401|{}'
+run_setup "$CONF_DIR/new6" --allowed acme
+assert_eq "board-setup reports a Jira error with exit 2" "2" "$CODE"
+assert_eq "board-setup keeps the config after a Jira error" "BOARD_ALLOWED_OWNERS=acme" "$(cat "$CONF_DIR/new6")"
+assert_eq "board-setup prints the Jira line without the token" "1 0" \
+  "$(grep -c 'Jira token rejected' <<<"$ERR") $(grep -c 'FAKE-TOKEN' <<<"$ERR")"
 rm -rf "$CONF_DIR"
 
 echo "Merge approval"
-U=https://github.com/gusdecool/x/issues/5
-# Runs the approval check for a body and an author association; sets OUT and RC.
+FIELDS_OK='[{"id":"description","name":"Description","custom":false},'
+FIELDS_OK+='{"id":"customfield_10036","name":"Auto merge","custom":true}]'
+# Queues the field list and the ticket's Auto merge value (a JSON value, default null), runs the approval check on
+# BM-5; sets OUT and RC.
 run_approve() {
-  jq -n --arg body "$1" --arg assoc "$2" '{body: $body, author_association: $assoc}' >"$STUB_DIR/gh-output"
-  OUT="$(bash "$APPROVE" "$U" 2>/dev/null)"; RC=$?
+  reset_curl "200|${2:-$FIELDS_OK}" "200|$(jq -cn --argjson v "${1:-null}" '{fields: {customfield_10036: $v}}')"
+  OUT="$(bash "$APPROVE" BM-5 2>/dev/null)"; RC=$?
 }
-run_approve $'## Goal\nx\n\nAuto merge: true\n' OWNER
-assert_eq "flag plus owner is approved" "0 true" "$RC $(jq -r .approved <<<"$OUT")"
-run_approve $'auto MERGE: **true**\r\n' COLLABORATOR
-assert_eq "case, bold and CRLF still count" "0" "$RC"
-run_approve $'## Goal\nx\n' OWNER
-assert_eq "no flag is not approved" "1" "$RC"
-run_approve $'Auto merge: false\n' OWNER
-assert_eq "Auto merge: false is not approved" "1" "$RC"
-run_approve $'> Auto merge: true\n' OWNER
-assert_eq "a quoted flag is ignored" "1" "$RC"
-run_approve $'Auto merge: true\n' NONE
-assert_eq "flag from a stranger is not approved" "1" "$RC"
-run_approve $'Auto merge: true\n' CONTRIBUTOR
-assert_eq "a contributor is not enough" "1" "$RC"
-bash "$APPROVE" not-a-url 2>/dev/null
-assert_eq "bad URL exits 2" "2" "$?"
+run_approve '[{"value":"Yes","id":"10036"}]'
+assert_eq "a ticked field is approved" "0 true" "$RC $(jq -r .approved <<<"$OUT")"
+assert_eq "the approved reason names the field" "the 'Auto merge' field is ticked" "$(jq -r .reason <<<"$OUT")"
+run_approve
+assert_eq "an absent value is not approved" "1 false" "$RC $(jq -r .approved <<<"$OUT")"
+assert_eq "the not approved reason names the field" "the 'Auto merge' field is not ticked" "$(jq -r .reason <<<"$OUT")"
+run_approve '[]'
+assert_eq "an empty array is not approved" "1" "$RC"
+run_approve '[{"value":"No"}]'
+assert_eq "the option No is not approved" "1" "$RC"
+run_approve '[{"value":"yes"}]'
+assert_eq "the value must be exactly Yes" "1" "$RC"
+run_approve '"Yes"'
+assert_eq "a plain string value is not approved" "1" "$RC"
+run_approve '[{"value":"Yes"}]' '[{"id":"description","name":"Description","custom":false}]'
+assert_eq "a missing Auto merge field exits 2" "2" "$RC"
+run_approve '[{"value":"Yes"}]' \
+  '[{"id":"customfield_1","name":"Auto merge","custom":true},{"id":"customfield_2","name":"Auto merge","custom":true}]'
+assert_eq "two fields named Auto merge exit 2" "2" "$RC"
+run_approve '[{"value":"Yes"}]' '[{"id":"customfield_1","name":"Auto merge","custom":false}]'
+assert_eq "a non-custom field named Auto merge is ignored" "2" "$RC"
+run_approve '[{"value":"Yes"}]' '[{"id":"customfield_10036?x=1","name":"Auto merge","custom":true}]'
+assert_eq "a malformed field id exits 2" "2" "$RC"
+assert_eq "a malformed field id is never used in a ticket request" "0" \
+  "$(grep -c '/rest/api/2/issue' "$STUB_DIR/curl-argv" || true)"
+reset_curl "200|$FIELDS_OK" "200|$(jq -cn '{fields: {customfield_10036: null, description: "Auto merge: true"}}')"
+OUT="$(bash "$APPROVE" BM-5 2>/dev/null)"; RC=$?
+assert_eq "text saying Auto merge: true does not approve" "1" "$RC"
+run_approve '[{"value":"Yes"}]'
+assert_eq "the ticket request asks only for the custom field" "1" \
+  "$(grep -c -x 'https://x.atlassian.net/rest/api/2/issue/BM-5?fields=customfield_10036' "$STUB_DIR/curl-argv" || true)"
+reset_curl "500|{}"
+bash "$APPROVE" BM-5 >/dev/null 2>&1
+assert_eq "a Jira error on the field list exits 2" "2" "$?"
+reset_curl "200|$FIELDS_OK" "500|{}"
+bash "$APPROVE" BM-5 >/dev/null 2>&1
+assert_eq "a Jira error on the ticket exits 2" "2" "$?"
+bash "$APPROVE" not-a-key 2>/dev/null
+assert_eq "a bad key exits 2" "2" "$?"
+bash "$APPROVE" https://evil.example/browse/BM-5 2>/dev/null
+assert_eq "a browse URL on another host exits 2" "2" "$?"
 
 echo "Flags"
 CF="$(mktemp -d)"
@@ -100,12 +184,12 @@ flag_of() {
     _ "$LIB"
 }
 assert_eq "absent flags default to blocking public, no infra" "[public] false" "$(flag_of "$FIX/config")"
-printf 'BOARD_OWNER=a\nBOARD_PROJECT=1\nBOARD_ALLOWED_OWNERS=a\nBOARD_BLOCKED_VISIBILITIES=\n' \
+printf 'BOARD_ALLOWED_OWNERS=a\nBOARD_BLOCKED_VISIBILITIES=\n' \
   >"$CF/set"
 printf 'BOARD_ALLOW_INFRA_CHANGE=true\n' >>"$CF/set"
 assert_eq "an empty blocked list and infra true are honoured" "[] true" "$(flag_of "$CF/set")"
-printf 'BOARD_OWNER=a\nBOARD_PROJECT=1\nBOARD_ALLOWED_OWNERS=a\nBOARD_ALLOW_INFRA_CHANGE=yes\n' >"$CF/bad"
-BOARD_WORKER_CONFIG="$CF/bad" bash "$CHECK" https://github.com/a/x/issues/1 2>/dev/null
+printf 'BOARD_ALLOWED_OWNERS=a\nBOARD_ALLOW_INFRA_CHANGE=yes\n' >"$CF/bad"
+BOARD_WORKER_CONFIG="$CF/bad" bash "$CHECK" BM-1 2>/dev/null
 assert_eq "an invalid flag exits 2" "2" "$?"
 rm -rf "$CF"
 
@@ -129,12 +213,9 @@ owner_ok acme/x
 assert_eq "acme/x is rejected" "1" "$?"
 
 echo "Board items"
-echo '{"items":[]}' >"$STUB_DIR/gh-output"
-rm -f "$STUB_DIR/gh-args"
 # shellcheck disable=SC1090
-assert_eq "board_items prints the gh output" '{"items":[]}' "$(source "$LIB"; board_items)"
-assert_eq "board_items lists project 9 as JSON" \
-  "project item-list 9 --owner bungamata --format json --limit 500" "$(cat "$STUB_DIR/gh-args")"
+assert_eq "the GitHub board_items helper is gone" "no" \
+  "$(source "$LIB"; declare -F board_items >/dev/null && echo yes || echo no)"
 
 echo "Ready check"
 run_check $'## Goal\nShip the board worker.\n\n## Acceptance criteria\n- [ ] Works\n'
@@ -175,102 +256,254 @@ run_check $'## Goal\nX\n\n## Done when\nY\n\n## Open questions\n\n'
 assert_eq "empty open questions pass" '{"ready":true,"missing":[]}' "$(jq -c . <<<"$OUT")"
 assert_eq "empty open questions exit 0" "0" "$CODE"
 
-# Resets the stub state and loads the board fixtures; every issue is ready unless a test says otherwise.
-reset_board() {
-  rm -f "$STUB_DIR"/gh-* "$STUB_DIR/calls.log"
-  cp "$FIX/items.json" "$STUB_DIR/gh-project-item-list"
-  cp "$FIX/fields.json" "$STUB_DIR/gh-project-field-list"
-  cp "$FIX/project.json" "$STUB_DIR/gh-project-view"
-  echo '{"visibility":"PRIVATE"}' >"$STUB_DIR/gh-repo-view"
-  set_body $'## Goal\nX\n\n## Done when\nY\n'
+run_check $'h2. Goal\nShip the board worker.\n\nh4. done when\n- works\n'
+assert_eq "Jira wiki headings pass at any level" '{"ready":true,"missing":[]}' "$(jq -c . <<<"$OUT")"
+assert_eq "Jira wiki headings exit 0" "0" "$CODE"
+run_check $'h2. Goal\nX\n\nh2. Done when\nY\n\nh2. Open questions\nWhich database?\n'
+assert_eq "Jira wiki open questions with an answer fail" '["Open questions"]' "$(jq -c .missing <<<"$OUT")"
+assert_eq "Jira wiki open questions with an answer exit 1" "1" "$CODE"
+run_check $'h2. Goal\nX\n\nh2. Done when\nY\n\nh2. Open questions\nnone\n\n## Notes\nWhich database?\n'
+assert_eq "a later Markdown heading ends the Jira wiki open questions" '{"ready":true,"missing":[]}' \
+  "$(jq -c . <<<"$OUT")"
+
+run_check $'## Goal\nX\n\n## Done when\nY\n' '[]'
+assert_eq "zero components fail with Component missing" '["Component"]' "$(jq -c .missing <<<"$OUT")"
+assert_eq "zero components exit 1" "1" "$CODE"
+run_check $'## Goal\nX\n\n## Done when\nY\n' '[{"name":"gusdecool/x"},{"name":"bungamata/api"}]'
+assert_eq "two components fail with Component missing" '["Component"]' "$(jq -c .missing <<<"$OUT")"
+run_check $'## Goal\nX\n\n## Done when\nY\n' '[{"name":"bungamata"}]'
+assert_eq "a component without an owner fails" '["Component"]' "$(jq -c .missing <<<"$OUT")"
+run_check $'## Goal\nX\n\n## Done when\nY\n' '[{"name":"bungamata/bm app"}]'
+assert_eq "a component with a space fails" '["Component"]' "$(jq -c .missing <<<"$OUT")"
+
+# Writes a Jira route for the curl stub. Args: route name, a glob matched against "METHOD URL", "<code>|<json>".
+# Routes are persistent and the first by name wins, so a "00-" name overrides a default "50-" route.
+route() {
+  mkdir -p "$STUB_DIR/curl-routes"
+  printf '%s\n%s\n' "$2" "$3" >"$STUB_DIR/curl-routes/$1"
 }
 
-# Makes the issue with the given number unready by giving it an empty body.
-make_unready() { echo '{"body":""}' >"$STUB_DIR/gh-issue-view-$1"; }
+READY_DESC=$'## Goal\nX\n\n## Done when\nY\n'
+# Replaces the Todo tickets of the fake Jira board. Each argument is "KEY|Priority|component", the last two may be
+# empty. Every ticket also gets a ready-check route (a ready description) with its component.
+set_todos() {
+  local spec key prio comp issues="[]"
+  for spec in "$@"; do
+    IFS='|' read -r key prio comp <<<"$spec"
+    issues="$(jq -c --arg k "$key" --arg p "$prio" --arg c "$comp" \
+      '. + [{key: $k, fields: {priority: (if $p == "" then null else {name: $p} end),
+        components: (if $c == "" then [] else [{name: $c}] end)}}]' <<<"$issues")"
+    route "50-ready-$key" "GET */rest/api/2/issue/$key\\?fields=description,components" \
+      "200|$(jq -cn --arg d "$READY_DESC" --arg c "$comp" \
+        '{fields: {description: $d, components: (if $c == "" then [] else [{name: $c}] end)}}')"
+  done
+  route "50-search-todo" 'GET *status%20%3D%20%22Todo%22*' \
+    "200|$(jq -cn --argjson i "$issues" '{issues: $i, isLast: true}')"
+}
 
-# Runs board-pick-next with a fixed date, storing stdout in OUT and the exit code in CODE.
+# Resets the stub state and loads the fake Jira board; every ticket is ready unless a test says otherwise.
+reset_board() {
+  rm -f "$STUB_DIR"/gh-* "$STUB_DIR/calls.log" "$STUB_DIR"/curl-argv "$STUB_DIR"/curl-calls "$STUB_DIR"/curl-body
+  rm -rf "$STUB_DIR/curl-routes"
+  : >"$STUB_DIR/curl-responses"
+  echo '{"visibility":"PRIVATE"}' >"$STUB_DIR/gh-repo-view"
+  route 50-transitions-get 'GET */transitions' \
+    '200|{"transitions":[{"id":"41","name":"Park","to":{"name":"HITL"}}]}'
+  route 50-transitions-post 'POST */transitions' '204|'
+  route 50-label 'PUT */rest/api/2/issue/*' '204|'
+  route 50-comment 'POST */comment' '201|{}'
+  set_todos "BM-10|Low|gusdecool/x" "BM-11|High|gusdecool/x" "BM-12|Highest|gusdecool/x" \
+    "BM-13|Medium|acme/y" "BM-14||gusdecool/x"
+}
+
+# Makes a ticket unready by giving it an empty description (and a valid component).
+make_unready() {
+  route "00-ready-$1" "GET */rest/api/2/issue/$1\\?fields=description,components" \
+    '200|{"fields":{"description":"","components":[{"name":"gusdecool/x"}]}}'
+}
+
+# Prints the mutating Jira steps taken on a ticket, in order, as "move label comment".
+mutations() {
+  awk -v k="$1" '$1 != "GET" && $2 ~ ("/issue/" k "(/|$)") {
+    w = ($2 ~ /transitions$/) ? "move" : ($2 ~ /comment$/) ? "comment" : "label"
+    printf "%s%s", (n++ ? " " : ""), w } END { print "" }' "$STUB_DIR/curl-calls"
+}
+# Counts every mutating Jira call (POST or PUT) of the last run.
+mutation_count() { grep -c -E '^(POST|PUT) ' "$STUB_DIR/curl-calls" || true; }
+# Counts the Jira calls of the last run that mention the given text.
+jira_mentions() { grep -c -F -- "$1" "$STUB_DIR/curl-calls" || true; }
+# Prints the body of the last POST to a ticket's comment endpoint.
+comment_of() { grep "^POST .*/issue/$1/comment " "$STUB_DIR/curl-calls" | tail -n 1 | cut -d' ' -f3-; }
+
+# Runs board-pick-next, storing stdout in OUT, stderr in ERR and the exit code in CODE.
 run_pick() {
-  OUT="$(TODAY=2026-11-06 bash "$PICK" 2>/dev/null)"
+  rm -f "$STUB_DIR/curl-calls"
+  OUT="$(bash "$PICK" "$@" 2>"$STUB_DIR/pick-err")"
   CODE=$?
+  ERR="$(cat "$STUB_DIR/pick-err")"
 }
 
 echo "Pick next"
 reset_board
 run_pick
-assert_eq "High priority in the current iteration wins" "12" "$(jq -r .number <<<"$OUT")"
-assert_eq "pick prints repo, url and item id" \
-  '{"repo":"gusdecool/x","number":12,"url":"https://github.com/gusdecool/x/issues/12","itemId":"I12"}' \
-  "$(jq -c . <<<"$OUT")"
+assert_eq "Highest priority wins" "BM-12" "$(jq -r .key <<<"$OUT")"
+assert_eq "pick prints repo, key and browse url" \
+  '{"repo":"gusdecool/x","key":"BM-12","url":"https://x.atlassian.net/browse/BM-12"}' "$(jq -c . <<<"$OUT")"
 assert_eq "pick exits 0" "0" "$CODE"
-assert_eq "disallowed owner is never checked" "0" "$(grep -c 'acme/y' "$STUB_DIR/calls.log" || true)"
+assert_eq "pick lists the Todo tickets of the project" "1" \
+  "$(grep -c 'search/jql?jql=project%20%3D%20BM%20AND%20status%20%3D%20%22Todo%22&fields=' "$STUB_DIR/curl-calls")"
+assert_eq "a foreign-owner ticket is never checked" "00" \
+  "$(grep -c 'acme/y' "$STUB_DIR/calls.log" || true)$(jira_mentions BM-13)"
+assert_eq "a ready pick changes nothing" "0" "$(mutation_count)"
+
+# Picks until the list is empty and prints the keys in pick order; ready tickets are removed one by one.
+pick_order() {
+  local specs=("$@") remaining order="" key spec
+  while [ "${#specs[@]}" -gt 0 ]; do
+    set_todos "${specs[@]}"
+    run_pick
+    [ "$CODE" -eq 0 ] || break
+    key="$(jq -r .key <<<"$OUT")"
+    order="$order $key"
+    remaining=()
+    for spec in "${specs[@]}"; do
+      if [ "${spec%%|*}" != "$key" ]; then remaining+=("$spec"); fi
+    done
+    specs=("${remaining[@]+"${remaining[@]}"}")
+  done
+  printf '%s' "${order# }"
+}
+reset_board
+assert_eq "priority order is Highest, High, Medium, Low, Lowest, none" "BM-6 BM-5 BM-4 BM-3 BM-2 BM-1" \
+  "$(pick_order "BM-1||gusdecool/x" "BM-2|Lowest|gusdecool/x" "BM-3|Low|gusdecool/x" "BM-4|Medium|gusdecool/x" \
+    "BM-5|High|gusdecool/x" "BM-6|Highest|gusdecool/x")"
+reset_board
+set_todos "BM-14||gusdecool/x"
+run_pick
+assert_eq "a ticket with no priority is still picked" "BM-14" "$(jq -r .key <<<"$OUT")"
+set_todos "BM-14||gusdecool/x" "BM-30|Low|gusdecool/x"
+run_pick
+assert_eq "a ticket with a priority beats one with none" "BM-30" "$(jq -r .key <<<"$OUT")"
+set_todos "BM-10|High|gusdecool/x" "BM-9|High|gusdecool/x"
+run_pick
+assert_eq "equal priority: BM-9 comes before BM-10 (numeric key order)" "BM-9" "$(jq -r .key <<<"$OUT")"
+set_todos "BM-100|Medium|gusdecool/x" "BM-20|Medium|gusdecool/x"
+run_pick
+assert_eq "equal priority: the lower key number wins, not the text order" "BM-20" "$(jq -r .key <<<"$OUT")"
 
 reset_board
-jq 'del(.items[2])' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
+make_unready BM-12
 run_pick
-assert_eq "High in an older iteration beats a lower priority" "11" "$(jq -r .number <<<"$OUT")"
+assert_eq "an unready ticket is skipped for the next one" "BM-11" "$(jq -r .key <<<"$OUT")"
+assert_eq "an unready ticket gets a comment naming the gap" "1" \
+  "$(comment_of BM-12 | grep -c -F 'Missing: Goal, Acceptance criteria. Moved to HITL.')"
+assert_eq "an unready ticket gets the HITL label" "1" \
+  "$(grep -c '^PUT https://x.atlassian.net/rest/api/2/issue/BM-12 {"update":{"labels":\[{"add":"HITL"}\]}}$' \
+    "$STUB_DIR/curl-calls")"
+assert_eq "an unready ticket moves to HITL" "1" \
+  "$(grep -c '^POST .*/issue/BM-12/transitions {"transition":{"id":"41"}}$' "$STUB_DIR/curl-calls")"
+assert_eq "parking moves, then labels, then comments" "move label comment" "$(mutations BM-12)"
 
 reset_board
-jq '.items |= map(select(.id == "I10" or .id == "I14"))' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
+set_todos "BM-13|Medium|acme/y"
 run_pick
-assert_eq "a card with a Priority beats one with none" "10" "$(jq -r .number <<<"$OUT")"
-jq '.items |= map(select(.id == "I14"))' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
-run_pick
-assert_eq "a card with no Priority is still picked" "14" "$(jq -r .number <<<"$OUT")"
+assert_eq "only a foreign-owner ticket: no qualifying ticket exits 1" "1" "$CODE"
+assert_eq "a foreign-owner ticket is ignored untouched" "00" "$(mutation_count)$(jira_mentions BM-13)"
 
 reset_board
-make_unready 12
+set_todos "BM-20|Highest|" "BM-21|Low|gusdecool/x"
 run_pick
-assert_eq "an unready card is skipped for the next one" "11" "$(jq -r .number <<<"$OUT")"
-assert_eq "an unready card gets a comment naming the gap" "1" \
-  "$(grep -c '^issue comment https://github.com/gusdecool/x/issues/12 --body .*Missing: Goal, Acceptance criteria' \
-    "$STUB_DIR/calls.log")"
-assert_eq "an unready card gets the HITL label" "1" \
-  "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/12 --add-label HITL' "$STUB_DIR/calls.log")"
-assert_eq "an unready card moves to HITL" "1" \
-  "$(grep -c '^project item-edit .*--id I12 .*--single-select-option-id o-hitl' "$STUB_DIR/calls.log")"
-assert_eq "parking moves, then labels, then comments" "project item-edit issue edit issue comment" \
-  "$(grep -E '^(issue comment|issue edit|project item-edit) .*(I12|issues/12)' "$STUB_DIR/calls.log" \
-    | awk '{printf "%s%s %s", (NR > 1 ? " " : ""), $1, $2}')"
+assert_eq "an unknown-repo ticket is parked and the next one is picked" "BM-21" "$(jq -r .key <<<"$OUT")"
+assert_eq "an unknown-repo ticket is parked with Component missing" "1" \
+  "$(comment_of BM-20 | grep -c 'Missing: Component. Moved to HITL.')"
+assert_eq "an unknown-repo ticket parks in order" "move label comment" "$(mutations BM-20)"
+assert_eq "an unknown-repo ticket is not looked up for visibility (only BM-21 is)" "1" \
+  "$(grep -c 'repo view' "$STUB_DIR/calls.log" || true)"
+set_todos "BM-22|High|bungamata"
+run_pick
+assert_eq "a component without an owner counts as unknown and is parked" "move label comment" "$(mutations BM-22)"
 
 reset_board
-jq '.items |= map(select(.id == "I13"))' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
+make_unready BM-12
+route 00-comment-fail 'POST */comment' '500|{}'
 run_pick
-assert_eq "no qualifying card exits 1" "1" "$CODE"
+assert_eq "a failing comment while parking exits 2" "2" "$CODE"
+assert_eq "a failing park prints cannot park" "1" "$(grep -c 'cannot park BM-12' <<<"$ERR")"
 
 reset_board
-jq '.items[2].iteration = "S3" | .items[1].iteration = {startDate: "2026-11-02"}' "$FIX/items.json" \
-  >"$STUB_DIR/gh-project-item-list"
-run_pick
-assert_eq "string or duration-less iteration does not crash" "0" "$CODE"
-assert_eq "malformed iterations sort as not current, by number" "11" "$(jq -r .number <<<"$OUT")"
-
-reset_board
-make_unready 12
-touch "$STUB_DIR/gh-fail-issue-comment"
-run_pick
-assert_eq "a failing gh while parking exits 2" "2" "$CODE"
-
-reset_board
-make_unready 12
-touch "$STUB_DIR/gh-fail-project-item-edit"
+make_unready BM-12
+route 00-move-fail 'POST */transitions' '400|{"errorMessages":["Transition is not valid"]}'
 run_pick
 assert_eq "a failed move exits 2" "2" "$CODE"
-assert_eq "a failed move posts no comment" "0" \
-  "$(grep -c '^issue comment .*issues/12' "$STUB_DIR/calls.log" || true)"
+assert_eq "a failed move posts no comment and no label" "move" "$(mutations BM-12)"
+assert_eq "a failed move never repeats a comment" "0" "$(jira_mentions BM-12/comment)"
+
+reset_board
+make_unready BM-12
+route 00-label-fail 'PUT */rest/api/2/issue/*' '403|{"errorMessages":["no"]}'
+run_pick
+assert_eq "a failed label exits 2" "2" "$CODE"
+assert_eq "a failed label posts no comment" "move label" "$(mutations BM-12)"
+
+reset_board
+route 00-search-fail 'GET *search/jql*' '401|{}'
+run_pick
+assert_eq "a Jira error while listing exits 2" "2" "$CODE"
+reset_board
+route 00-ready-BM-12 'GET */rest/api/2/issue/BM-12\?fields=description,components' '500|{}'
+run_pick
+assert_eq "an unreadable ticket is skipped" "BM-11" "$(jq -r .key <<<"$OUT")"
+assert_eq "an unreadable ticket is named on stderr" "1" "$(grep -c 'skipping BM-12, cannot read it' <<<"$ERR")"
+assert_eq "an unreadable ticket is left alone" "" "$(mutations BM-12)"
 
 echo "Set status"
-reset_board
-bash "$SETSTATUS" https://github.com/gusdecool/x/issues/10 "In progress" 2>/dev/null
-assert_eq "set-status exits 0" "0" "$?"
-assert_eq "set-status sends the project, card, field and option IDs" \
-  "project item-edit --project-id PROJ9 --id I10 --field-id FS --single-select-option-id o-prog" \
-  "$(grep '^project item-edit' "$STUB_DIR/calls.log")"
-reset_board
-bash "$SETSTATUS" https://github.com/gusdecool/x/issues/10 Doing 2>/dev/null
+TRANSITIONS='{"transitions":[{"id":"11","name":"Start","to":{"name":"In progress"}},'
+TRANSITIONS+='{"id":"31","name":"Finish","to":{"name":"Done"}}]}'
+reset_curl "200|$TRANSITIONS" '204|'
+OUT="$(bash "$SETSTATUS" https://x.atlassian.net/browse/BM-1 Done 2>"$STUB_DIR/err")"; CODE=$?
+assert_eq "set-status exits 0 when the transition posts" "0" "$CODE"
+assert_eq "set-status prints nothing on success" "" "$OUT"
+assert_eq "set-status posts the matching transition id" '{"transition":{"id":"31"}}' \
+  "$(jq -c . "$STUB_DIR/curl-body")"
+assert_eq "set-status sends a POST after the GET" "1" "$(grep -c -x 'POST' "$STUB_DIR/curl-argv")"
+assert_eq "set-status reads and posts the transitions of the browse URL's key" "2" \
+  "$(grep -c -x 'https://x.atlassian.net/rest/api/2/issue/BM-1/transitions' "$STUB_DIR/curl-argv")"
+reset_curl "200|$TRANSITIONS" '204|'
+bash "$SETSTATUS" BM-1 "In progress" 2>/dev/null
+assert_eq "set-status finds a status with a space" "0" "$?"
+assert_eq "set-status posts the In progress transition id" '{"transition":{"id":"11"}}' \
+  "$(jq -c . "$STUB_DIR/curl-body")"
+reset_curl
+bash "$SETSTATUS" BM-1 Doing 2>"$STUB_DIR/err"
 assert_eq "set-status rejects an unknown status with 2" "2" "$?"
-assert_eq "set-status does not edit on an unknown status" "0" "$(grep -c '^project item-edit' "$STUB_DIR/calls.log")"
-bash "$SETSTATUS" https://github.com/gusdecool/x/issues/999 Done 2>/dev/null
-assert_eq "set-status rejects an unknown card with 2" "2" "$?"
+assert_eq "set-status prints one line for an unknown status" "board-set-status: unknown status 'Doing'" \
+  "$(cat "$STUB_DIR/err")"
+assert_eq "set-status never calls curl on an unknown status" "no" \
+  "$([ -e "$STUB_DIR/curl-argv" ] && echo yes || echo no)"
+bash "$SETSTATUS" BM-1 "done" 2>/dev/null
+assert_eq "set-status status match is case-sensitive" "2" "$?"
+bash "$SETSTATUS" not-a-key Done 2>/dev/null
+assert_eq "set-status rejects a bad ticket key with 2" "2" "$?"
+assert_eq "set-status never calls curl for a bad key" "no" "$([ -e "$STUB_DIR/curl-argv" ] && echo yes || echo no)"
+reset_curl "200|{\"transitions\":[{\"id\":\"11\",\"name\":\"Start\",\"to\":{\"name\":\"In progress\"}}]}"
+bash "$SETSTATUS" BM-1 QA 2>"$STUB_DIR/err"
+assert_eq "set-status with no matching transition exits 2" "2" "$?"
+assert_eq "set-status with no matching transition prints one line" \
+  "board-set-status: no transition to 'QA' from the current status" "$(cat "$STUB_DIR/err")"
+assert_eq "set-status with no matching transition posts nothing" "0" \
+  "$(grep -c -x 'POST' "$STUB_DIR/curl-argv" || true)"
+assert_eq "set-status with no matching transition makes only the GET" "1" \
+  "$(grep -c '^https://' "$STUB_DIR/curl-argv")"
+reset_curl "200|$TRANSITIONS" '400|{"errorMessages":["Transition is not valid"]}'
+bash "$SETSTATUS" BM-1 Done 2>"$STUB_DIR/err"
+assert_eq "a Jira error on the POST exits 2" "2" "$?"
+assert_eq "a Jira error on the POST prints the Jira line only" \
+  "board-worker: Jira HTTP 400: Transition is not valid" "$(cat "$STUB_DIR/err")"
+reset_curl '404|{"errorMessages":["Issue does not exist or you do not have permission to see it."]}'
+bash "$SETSTATUS" BM-999 Done 2>"$STUB_DIR/err"
+assert_eq "an unknown ticket exits 2 on the Jira 404" "2" "$?"
+assert_eq "an unknown ticket prints the Jira line only" \
+  "board-worker: Jira HTTP 404: Issue does not exist or you do not have permission to see it." "$(cat "$STUB_DIR/err")"
 
 echo "Pick provider"
 cat >"$STUB_DIR/orca" <<'STUB'
@@ -437,19 +670,21 @@ assert_eq "an unreadable worker exits 2" "2" "$CODE"
 
 echo "Pick next --dry-run"
 reset_board
-make_unready 12
-OUT="$(TODAY=2026-11-06 bash "$PICK" --dry-run 2>/dev/null)"
-CODE=$?
-assert_eq "dry-run still picks the next ready card" "11" "$(jq -r .number <<<"$OUT")"
+make_unready BM-12
+run_pick --dry-run
+assert_eq "dry-run still picks the next ready ticket" "BM-11" "$(jq -r .key <<<"$OUT")"
 assert_eq "dry-run exits 0" "0" "$CODE"
-assert_eq "dry-run never comments, labels or moves" "0" \
-  "$(grep -c -E '^(issue comment|issue edit|project item-edit)' "$STUB_DIR/calls.log" || true)"
+assert_eq "dry-run never comments, labels or moves" "0" "$(mutation_count)"
 
 echo "Draft check"
 DRAFT="$(mktemp)"
 printf '## Goal\nShip it.\n\n## Acceptance criteria\n- works\n' >"$DRAFT"
 OUT="$(bash "$CHECK" --file "$DRAFT")"; CODE=$?
 assert_eq "a ready draft file passes" "0 true" "$CODE $(jq -r .ready <<<"$OUT")"
+reset_curl
+OUT="$(bash "$CHECK" --file "$DRAFT")"; CODE=$?
+assert_eq "a draft has no component check and makes no Jira call" "0 no" \
+  "$CODE $([ -e "$STUB_DIR/curl-argv" ] && echo yes || echo no)"
 printf '## Acceptance criteria\n- works\n' >"$DRAFT"
 OUT="$(bash "$CHECK" --file "$DRAFT")"; CODE=$?
 assert_eq "a draft without a Goal fails" "1 [\"Goal\"]" "$CODE $(jq -c .missing <<<"$OUT")"
@@ -462,24 +697,20 @@ reset_board
 echo '{"visibility":"PUBLIC"}' >"$STUB_DIR/gh-repo-view"
 run_pick
 assert_eq "all public: nothing is picked" "1" "$CODE"
-assert_eq "a public repo's card is commented" "1" \
-  "$(grep -c '^issue comment https://github.com/gusdecool/x/issues/12 --body .*visibility is blocked' \
-    "$STUB_DIR/calls.log")"
-assert_eq "a public repo's card gets HITL" "1" \
-  "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/12 --add-label HITL' "$STUB_DIR/calls.log")"
-assert_eq "a public repo's card moves to HITL" "1" \
-  "$(grep -c '^project item-edit .*--id I12 .*--single-select-option-id o-hitl' "$STUB_DIR/calls.log")"
+assert_eq "a public repo's ticket is commented" "1" \
+  "$(comment_of BM-12 | grep -c -F "Ignored by the board worker: this repo's visibility is blocked")"
+assert_eq "a public repo's ticket gets HITL and moves, in order" "move label comment" "$(mutations BM-12)"
+assert_eq "a public repo's ticket gets the HITL label" "1" \
+  "$(grep -c '^PUT .*/issue/BM-12 {"update":{"labels":\[{"add":"HITL"}\]}}$' "$STUB_DIR/curl-calls")"
 reset_board
 echo '{"visibility":"PUBLIC"}' >"$STUB_DIR/gh-repo-view"
-OUT="$(TODAY=2026-11-06 bash "$PICK" --dry-run 2>/dev/null)"
-assert_eq "dry-run on a public repo changes nothing" "0" \
-  "$(grep -c -E '^(issue comment|issue edit|project item-edit)' "$STUB_DIR/calls.log" || true)"
+run_pick --dry-run
+assert_eq "dry-run on a public repo changes nothing" "0" "$(mutation_count)"
 reset_board
 touch "$STUB_DIR/gh-fail-repo-view"
 run_pick
-assert_eq "an unreadable visibility skips the card, exit 1" "1" "$CODE"
-assert_eq "an unreadable visibility changes nothing" "0" \
-  "$(grep -c -E '^(issue comment|issue edit|project item-edit)' "$STUB_DIR/calls.log" || true)"
+assert_eq "an unreadable visibility skips the ticket, exit 1" "1" "$CODE"
+assert_eq "an unreadable visibility changes nothing" "0" "$(mutation_count)"
 rm -f "$STUB_DIR/gh-fail-repo-view"
 
 echo "Diff check"
@@ -506,34 +737,135 @@ assert_eq "an unreadable file list exits 2" "2" "$?"
 rm -f "$STUB_DIR/gh-fail-pr-diff"
 
 echo "Merge gate"
-G=https://github.com/gusdecool/x/issues/5
-# Runs the merge gate for an approval, author association, visibility and file list; sets OUT and RC.
-run_gate() {
-  jq -n --arg body "$1" --arg assoc "$2" '{body: $body, author_association: $assoc}' >"$STUB_DIR/gh-output"
-  echo "{\"visibility\":\"$3\"}" >"$STUB_DIR/gh-repo-view"
-  printf '%s\n' "${@:4}" >"$STUB_DIR/gh-pr-diff"
-  OUT="$(bash "$GATE" "$G" 3 2>/dev/null)"; RC=$?
+# Runs the merge gate on BM-5 / PR 3. Args: Auto merge value (JSON), visibility, then the PR file list. The ticket
+# has the component in COMPONENTS (default gusdecool/x). Sets OUT and RC.
+COMPONENTS='[{"name":"gusdecool/x"}]'
+# Queues the three Jira answers of a gate run: components, field list, Auto merge value (arg 1, JSON).
+queue_gate() {
+  reset_curl "200|$(jq -cn --argjson c "$COMPONENTS" '{fields: {components: $c}}')" "200|$FIELDS_OK" \
+    "200|$(jq -cn --argjson v "$1" '{fields: {customfield_10036: $v}}')"
 }
-run_gate $'Auto merge: true\n' OWNER PRIVATE src/a.ts
+PRVIEW='{"headRefName":"BM-5-fix-it","state":"OPEN"}'
+run_gate() {
+  queue_gate "$1"
+  printf '%s\n' "$PRVIEW" >"$STUB_DIR/gh-pr-view"
+  echo "{\"visibility\":\"$2\"}" >"$STUB_DIR/gh-repo-view"
+  printf '%s\n' "${@:3}" >"$STUB_DIR/gh-pr-diff"
+  : >"$STUB_DIR/calls.log"
+  OUT="$(bash "$GATE" BM-5 3 2>/dev/null)"; RC=$?
+}
+# Prints the first blocked reason of the last gate run.
+first_block() { jq -r '.blocked[0]' <<<"$OUT"; }
+TICKED='[{"value":"Yes"}]'
+run_gate "$TICKED" PRIVATE src/a.ts
 assert_eq "everything in order is allowed" "0 true" "$RC $(jq -r .allowed <<<"$OUT")"
-run_gate $'Auto merge: true\n' OWNER PUBLIC src/a.ts
-assert_eq "a public repo blocks the merge" "1" "$RC"
-run_gate $'Goal only\n' OWNER PRIVATE src/a.ts
-assert_eq "no Auto merge line blocks the merge" "1" "$RC"
-run_gate $'Auto merge: true\n' OWNER PRIVATE .github/workflows/x.yml
+assert_eq "the allowed output has no reasons" "[]" "$(jq -c .blocked <<<"$OUT")"
+COMPONENTS='[{"name":"other/x"}]'
+run_gate "$TICKED" PRIVATE src/a.ts
+assert_eq "an owner outside the allow-list blocks the merge" "1 repo owner is not in the allowed owners" \
+  "$RC $(first_block)"
+COMPONENTS='[{"name":"gusdecool/x"}]'
+run_gate "$TICKED" PUBLIC src/a.ts
+assert_eq "a public repo blocks the merge" "1 repo visibility is blocked by the board-worker config" \
+  "$RC $(first_block)"
+touch "$STUB_DIR/gh-fail-repo-view"
+queue_gate "$TICKED"
+OUT="$(bash "$GATE" BM-5 3 2>/dev/null)"; RC=$?
+rm -f "$STUB_DIR/gh-fail-repo-view"
+assert_eq "an unreadable visibility blocks the merge" "1 repo visibility could not be read" "$RC $(first_block)"
+run_gate null PRIVATE src/a.ts
+assert_eq "an unticked Auto merge blocks the merge" "1 the 'Auto merge' field is not ticked" "$RC $(first_block)"
+reset_curl "200|$(jq -cn --argjson c "$COMPONENTS" '{fields: {components: $c}}')" "500|{}"
+printf '%s\n' src/a.ts >"$STUB_DIR/gh-pr-diff"
+echo '{"visibility":"PRIVATE"}' >"$STUB_DIR/gh-repo-view"
+OUT="$(bash "$GATE" BM-5 3 2>/dev/null)"; RC=$?
+assert_eq "an unreadable approval blocks the merge" "1 approval could not be read" "$RC $(first_block)"
+run_gate "$TICKED" PRIVATE .github/workflows/x.yml
 assert_eq "a CI/CD change blocks the merge" "1" "$RC"
-run_gate $'Auto merge: true\n' OWNER PRIVATE main.tf
+assert_eq "the CI/CD reason lists the path" "true" \
+  "$(jq -r '.blocked[0] | contains("CI/CD") and contains(".github/workflows/x.yml")' <<<"$OUT")"
+run_gate "$TICKED" PRIVATE main.tf
 assert_eq "an infra change blocks by default" "1" "$RC"
-OUT="$(BOARD_WORKER_CONFIG="$FIX/config-infra" bash "$GATE" "$G" 3 2>/dev/null)"; RC=$?
+run_gate "$TICKED" PRIVATE main.tf
+queue_gate "$TICKED"
+OUT="$(BOARD_WORKER_CONFIG="$FIX/config-infra" bash "$GATE" BM-5 3 2>/dev/null)"; RC=$?
 assert_eq "an infra change passes when the flag is true" "0" "$RC"
-printf '%s\n' .github/workflows/x.yml >"$STUB_DIR/gh-pr-diff"
-OUT="$(BOARD_WORKER_CONFIG="$FIX/config-infra" bash "$GATE" "$G" 3 2>/dev/null)"; RC=$?
+run_gate "$TICKED" PRIVATE .github/workflows/x.yml
+queue_gate "$TICKED"
+OUT="$(BOARD_WORKER_CONFIG="$FIX/config-infra" bash "$GATE" BM-5 3 2>/dev/null)"; RC=$?
 assert_eq "a CI/CD change blocks even with the infra flag" "1" "$RC"
-run_gate $'Auto merge: true\n' OWNER PRIVATE src/a.ts
+run_gate "$TICKED" PRIVATE src/a.ts
 touch "$STUB_DIR/gh-fail-pr-diff"
-OUT="$(bash "$GATE" "$G" 3 2>/dev/null)"; RC=$?
-assert_eq "an unreadable file list blocks the merge" "1" "$RC"
+queue_gate "$TICKED"
+OUT="$(bash "$GATE" BM-5 3 2>/dev/null)"; RC=$?
 rm -f "$STUB_DIR/gh-fail-pr-diff"
+assert_eq "an unreadable file list blocks the merge" "1 the PR file list could not be read" "$RC $(first_block)"
+BAD_COMPONENTS=('[]' '[{"name":"gusdecool/x"},{"name":"gusdecool/y"}]' '[{"name":"not a repo"}]' '[{"name":"a/b/c"}]')
+for COMPONENTS in "${BAD_COMPONENTS[@]}"; do
+  run_gate "$TICKED" PRIVATE src/a.ts
+  assert_eq "components $COMPONENTS block with the component reason" \
+    "1 the ticket must have exactly one component named owner/repo" "$RC $(first_block)"
+  assert_eq "components $COMPONENTS never read the PR diff" "0" "$(grep -c 'pr diff' "$STUB_DIR/calls.log" || true)"
+  assert_eq "components $COMPONENTS still run the approval" "3" \
+    "$(grep -c "/rest/api/2/" "$STUB_DIR/curl-argv" || true)"
+done
+COMPONENTS='[]'
+run_gate null PRIVATE src/a.ts
+assert_eq "no component and no approval give two reasons" "2" "$(jq '.blocked | length' <<<"$OUT")"
+COMPONENTS='[{"name":"gusdecool/x"}]'
+reset_curl "500|{}"
+bash "$GATE" BM-5 3 >/dev/null 2>&1
+assert_eq "a Jira error on the components exits 2" "2" "$?"
+run_gate "$TICKED" PRIVATE src/a.ts
+OUT="$(bash "$GATE" BM-5 abc 2>/dev/null)"; RC=$?
+assert_eq "a non-numeric PR number exits 2" "2" "$RC"
+bash "$GATE" not-a-key 3 >/dev/null 2>&1
+assert_eq "a bad key exits 2" "2" "$?"
+run_gate null PUBLIC .github/workflows/x.yml
+assert_eq "several blocks are all listed" "3" "$(jq '.blocked | length' <<<"$OUT")"
+assert_eq "the blocked output is valid JSON" "true" \
+  "$(jq -e '.allowed == false and (.blocked | type == "array")' <<<"$OUT")"
+
+# Runs the gate for PR view JSON $1 on a valid, approved, private-repo ticket; sets OUT and RC.
+run_gate_pr() { PRVIEW="$1"; run_gate "$TICKED" PRIVATE src/a.ts; }
+run_gate_pr '{"headRefName":"BM-5-x","state":"OPEN"}'
+assert_eq "an open PR on the ticket branch passes" "0" "$RC"
+assert_eq "the repo is printed on success" "gusdecool/x" "$(jq -r .repo <<<"$OUT")"
+assert_eq "the output keys are in order" '["allowed","repo","blocked"]' "$(jq -c 'keys_unsorted' <<<"$OUT")"
+assert_eq "the PR is looked up in the ticket's repo" "1" \
+  "$(grep -c -x 'pr view 3 --repo gusdecool/x --json headRefName,state' "$STUB_DIR/calls.log" || true)"
+BRANCH_MSG="the PR branch does not belong to this ticket (it must start with BM-5-)"
+run_gate_pr '{"headRefName":"BM-55-x","state":"OPEN"}'
+assert_eq "a longer key prefix is another ticket" "1 $BRANCH_MSG" "$RC $(first_block)"
+run_gate_pr '{"headRefName":"bm-5-x","state":"OPEN"}'
+assert_eq "a lowercase key blocks" "1 $BRANCH_MSG" "$RC $(first_block)"
+run_gate_pr '{"headRefName":"BM-5","state":"OPEN"}'
+assert_eq "the bare key as branch blocks" "1 $BRANCH_MSG" "$RC $(first_block)"
+run_gate_pr '{"headRefName":"feature/BM-5-x","state":"OPEN"}'
+assert_eq "a key that is not at the start blocks" "1" "$RC"
+run_gate_pr '{"headRefName":"BM-5-x","state":"MERGED"}'
+assert_eq "a merged PR blocks" "1 the PR is not open" "$RC $(first_block)"
+run_gate_pr '{"headRefName":"BM-5-x","state":"CLOSED"}'
+assert_eq "a closed PR blocks" "1 the PR is not open" "$RC $(first_block)"
+assert_eq "a PR that fails check 5 is not diffed" "0" "$(grep -c 'pr diff' "$STUB_DIR/calls.log" || true)"
+run_gate_pr 'not json'
+assert_eq "unparseable PR data blocks" "1 the PR could not be read in gusdecool/x" "$RC $(first_block)"
+run_gate_pr '{"state":"OPEN"}'
+assert_eq "PR data without a branch blocks" "1" "$RC"
+PRVIEW='{"headRefName":"BM-5-x","state":"OPEN"}'
+touch "$STUB_DIR/gh-fail-pr-view"
+run_gate "$TICKED" PRIVATE src/a.ts
+rm -f "$STUB_DIR/gh-fail-pr-view"
+assert_eq "a failing gh pr view blocks" "1 the PR could not be read in gusdecool/x" "$RC $(first_block)"
+assert_eq "a failing gh pr view never reaches the diff" "0" "$(grep -c 'pr diff' "$STUB_DIR/calls.log" || true)"
+run_gate_pr '{"headRefName":"BM-5-x","state":"MERGED"}'
+assert_eq "a blocked PR keeps the other results (repo still printed)" "gusdecool/x" "$(jq -r .repo <<<"$OUT")"
+COMPONENTS='[]'
+run_gate_pr '{"headRefName":"BM-5-x","state":"OPEN"}'
+assert_eq "no valid component prints an empty repo" '""' "$(jq -c .repo <<<"$OUT")"
+assert_eq "no valid component never calls gh pr view" "0" "$(grep -c 'pr view' "$STUB_DIR/calls.log" || true)"
+COMPONENTS='[{"name":"gusdecool/x"}]'
+PRVIEW='{"headRefName":"BM-5-fix-it","state":"OPEN"}'
 
 echo "Precheck"
 NOW_ISO=2026-11-06T12:00:00Z
@@ -549,118 +881,149 @@ exit 1
 STUB
 chmod +x "$STUB_DIR/pp-ok" "$STUB_DIR/pp-fail"
 
-# Loads the board with In progress cards 20 and 21 on top of the Todo fixtures.
+# Replaces the In progress tickets of the fake Jira board. Each argument is "KEY|updated|component"; updated and
+# component may be empty (no updated field, no component).
+set_progress() {
+  local spec key upd comp issues="[]"
+  for spec in "$@"; do
+    IFS='|' read -r key upd comp <<<"$spec"
+    issues="$(jq -c --arg k "$key" --arg u "$upd" --arg c "$comp" \
+      '. + [{key: $k, fields: ({components: (if $c == "" then [] else [{name: $c}] end)}
+        + (if $u == "" then {} else {updated: $u} end))}]' <<<"$issues")"
+  done
+  route "50-search-progress" 'GET *%22In%20progress%22*' \
+    "200|$(jq -cn --argjson i "$issues" '{issues: $i, isLast: true}')"
+}
+
+# Loads the board with In progress tickets BM-20 (30 minutes quiet, +0800 clock) and BM-21 (1 hour quiet) on top of
+# the Todo fixtures.
 precheck_board() {
   reset_board
-  jq '.items += [
-    {"id":"I20","status":"In progress","content":{"type":"Issue","number":20,"repository":"gusdecool/x",
-      "url":"https://github.com/gusdecool/x/issues/20"}},
-    {"id":"I21","status":"In progress","content":{"type":"Issue","number":21,"repository":"gusdecool/x",
-      "url":"https://github.com/gusdecool/x/issues/21"}}]' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
-  echo '{"updatedAt":"2026-11-06T11:30:00Z"}' >"$STUB_DIR/gh-issue-view-20"
-  echo '{"updatedAt":"2026-11-06T11:00:00Z"}' >"$STUB_DIR/gh-issue-view-21"
+  set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x" "BM-21|2026-11-06T11:00:00.000+0000|gusdecool/x"
   echo '[]' >"$STUB_DIR/gh-pr-list"
 }
 # Runs board-precheck with a fixed clock and a provider stub, storing the exit code in CODE and stderr in ERR.
 run_precheck() {
-  ERR="$(TODAY=2026-11-06 NOW_EPOCH="$NOW_EPOCH" PICK_PROVIDER="$STUB_DIR/${1:-pp-ok}" \
-    bash "$PRECHECK" 2>&1 >/dev/null)"
+  rm -f "$STUB_DIR/curl-calls"
+  ERR="$(NOW_EPOCH="$NOW_EPOCH" PICK_PROVIDER="$STUB_DIR/${1:-pp-ok}" bash "$PRECHECK" 2>&1 >/dev/null)"
   CODE=$?
 }
 
 precheck_board
 run_precheck
-assert_eq "two active In progress cards exit 1" "1" "$CODE"
+assert_eq "two active In progress tickets exit 1" "1" "$CODE"
 assert_eq "the failed condition is named on one line" "1" "$(wc -l <<<"$ERR" | tr -d ' ')"
 assert_eq "the line names the In progress limit" "1" "$(grep -c 'In progress' <<<"$ERR")"
-assert_eq "active cards are not reaped" "0" "$(grep -c -E '^(issue comment|issue edit)' "$STUB_DIR/calls.log" || true)"
+assert_eq "active tickets are not reaped" "0" "$(mutation_count)"
+assert_eq "the In progress search uses the project and the status" "1" \
+  "$(grep -c 'jql=project%20%3D%20BM%20AND%20status%20%3D%20%22In%20progress%22&fields=summary%2Ccomponents%2Cupdated' \
+    "$STUB_DIR/curl-calls")"
 
 precheck_board
-echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
+set_progress "BM-20|2026-11-06T17:00:00.123+0800|gusdecool/x" "BM-21|2026-11-06T11:00:00.000+0000|gusdecool/x"
 echo '[{"updatedAt":"2026-11-06T08:00:00Z","url":"https://github.com/gusdecool/x/pull/99"}]' >"$STUB_DIR/gh-pr-list"
 run_precheck
-assert_eq "a 3-hour-stale card is reaped and frees a slot" "0" "$CODE"
-assert_eq "the stale card gets a comment with the 2-hour rule, last activity and last PR" "1" \
-  "$(grep -c -E 'issues/20 --body .*2026-11-06T09:00:00Z.*2 hours.*pull/99' "$STUB_DIR/calls.log")"
-assert_eq "the stale card gets the HITL label" "1" \
-  "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/20 --add-label HITL' "$STUB_DIR/calls.log")"
-assert_eq "the stale card moves to HITL" "1" \
-  "$(grep -c '^project item-edit .*--id I20 .*--single-select-option-id o-hitl' "$STUB_DIR/calls.log")"
-assert_eq "the active card is left alone" "0" \
-  "$(grep -c -E '^issue (comment|edit) .*issues/21' "$STUB_DIR/calls.log" || true)"
-assert_eq "the precheck never parks Todo cards" "0" \
-  "$(grep -c -E '^issue (comment|edit) .*issues/1[0-4]' "$STUB_DIR/calls.log" || true)"
+assert_eq "a 3-hour-stale ticket is reaped and frees a slot" "0" "$CODE"
+assert_eq "the stale ticket gets a comment with the 2-hour rule, last activity and last PR" "1" \
+  "$(comment_of BM-20 \
+    | grep -c -E 'since 2026-11-06T09:00:00Z.*2 hours.*seen: https://github.com/gusdecool/x/pull/99\.')"
+assert_eq "the stale ticket gets the HITL label" "1" \
+  "$(grep -c '^PUT .*/issue/BM-20 {"update":{"labels":\[{"add":"HITL"}\]}}$' "$STUB_DIR/curl-calls")"
+assert_eq "the stale ticket moves, labels and comments in that order" "move label comment" "$(mutations BM-20)"
+assert_eq "the fresh ticket is left alone" "" "$(mutations BM-21)"
+assert_eq "the precheck never parks Todo tickets" "" "$(mutations BM-1[0-4])"
+assert_eq "the PR search is by ticket key, newest first, 100 results" "1" \
+  "$(grep -c -E '^pr list --repo gusdecool/x --state all --limit 100 --search BM-20 sort:updated-desc ' \
+    "$STUB_DIR/calls.log")"
 
 precheck_board
-echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
+set_progress "BM-20|2026-11-06T17:00:00.000+0800|gusdecool/x" "BM-21|2026-11-06T11:00:00.000+0000|gusdecool/x"
 echo '[{"updatedAt":"2026-11-06T11:45:00Z","url":"https://github.com/gusdecool/x/pull/98"}]' >"$STUB_DIR/gh-pr-list"
 run_precheck
-assert_eq "recent PR activity keeps a card with a stale issue" "1" "$CODE"
-assert_eq "a card with recent PR activity is not reaped" "0" "$(grep -c '^issue comment' "$STUB_DIR/calls.log" || true)"
+assert_eq "recent PR activity keeps a ticket with a stale Jira update" "1" "$CODE"
+assert_eq "a ticket with recent PR activity is not reaped" "0" "$(mutation_count)"
 
 precheck_board
-jq '.items |= map(select(.status != "Todo"))' "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
-jq '.items |= map(select(.id != "I21"))' "$STUB_DIR/items.tmp" >"$STUB_DIR/gh-project-item-list"
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x" "BM-21|2026-11-06T04:00:00.000-0500|gusdecool/x"
 run_precheck
-assert_eq "no Todo card exits 1" "1" "$CODE"
-assert_eq "no Todo card is named" "1" "$(grep -c 'Todo' <<<"$ERR")"
+assert_eq "a -0500 time is converted: 04:00-0500 is 09:00Z, stale" "0" "$CODE"
+assert_eq "the -0500 ticket is reaped with its UTC time" "1" \
+  "$(comment_of BM-21 | grep -c -F 'No activity since 2026-11-06T09:00:00Z')"
+assert_eq "a +0800 time is converted: 19:30+0800 is 11:30Z, fresh" "" "$(mutations BM-20)"
+precheck_board
+set_progress "BM-20|2026-11-06T17:00:00.123+0800|gusdecool/x" "BM-21|2026-11-06T06:30:00.000-0500|gusdecool/x"
+run_precheck
+assert_eq "a +0800 time is converted: 17:00+0800 is 09:00Z, stale" "move label comment" "$(mutations BM-20)"
+assert_eq "a -0500 time is converted: 06:30-0500 is 11:30Z, fresh" "" "$(mutations BM-21)"
+assert_eq "the offset conversion lets the precheck pass" "0" "$CODE"
+precheck_board
+set_progress "BM-20|2026-11-06T11:59:00.5+0000|gusdecool/x" "BM-21|2026-11-06T14:00:00Z|gusdecool/x"
+run_precheck
+assert_eq "an offset +0000 and a Z time are both read" "1" "$CODE"
 
 precheck_board
-jq '.items |= map(select(.id != "I21"))' "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
-cp "$STUB_DIR/items.tmp" "$STUB_DIR/gh-project-item-list"
+set_todos
+run_precheck
+assert_eq "no Todo ticket and two active tickets exit 1" "1" "$CODE"
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x"
+run_precheck
+assert_eq "no Todo ticket exits 1" "1" "$CODE"
+assert_eq "no Todo ticket is named" "1" "$(grep -c 'Todo' <<<"$ERR")"
+
+precheck_board
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x"
 run_precheck pp-fail
 assert_eq "provider failure exits 1" "1" "$CODE"
 assert_eq "provider failure is named" "1" "$(grep -c 'provider' <<<"$ERR")"
 run_precheck pp-ok
-assert_eq "one In progress card, a Todo card and a provider exit 0" "0" "$CODE"
+assert_eq "one In progress ticket, a Todo ticket and a provider exit 0" "0" "$CODE"
 
 precheck_board
-echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
-echo '{"updatedAt":"2026-11-06T08:00:00Z"}' >"$STUB_DIR/gh-issue-view-21"
+set_progress "BM-20|2026-11-06T17:00:00.000+0800|gusdecool/x" "BM-21|2026-11-06T16:00:00.000+0800|gusdecool/x"
 run_precheck
-assert_eq "both stale cards are reaped, so the precheck passes" "0" "$CODE"
-assert_eq "the status move happens before the comment" "1" \
-  "$([ "$(grep -n '^project item-edit .*--id I20' "$STUB_DIR/calls.log" | head -1 | cut -d: -f1)" -lt \
-    "$(grep -n '^issue comment .*issues/20' "$STUB_DIR/calls.log" | head -1 | cut -d: -f1)" ] && echo 1 || echo 0)"
-assert_eq "the PR lookup asks for 100 results, newest first" "1" \
-  "$(grep -c -E '^pr list .*--limit 100 --search #20 sort:updated-desc' "$STUB_DIR/calls.log")"
+assert_eq "both stale tickets are reaped, so the precheck passes" "0" "$CODE"
+assert_eq "the status move happens before the comment" "move label comment" "$(mutations BM-20)"
+assert_eq "the second stale ticket is reaped too" "move label comment" "$(mutations BM-21)"
 
 precheck_board
-echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
-echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-21"
-touch "$STUB_DIR/gh-fail-issue-comment"
+set_progress "BM-20|2026-11-06T17:00:00.000+0800|gusdecool/x" "BM-21|2026-11-06T17:00:00.000+0800|gusdecool/x"
+route 00-comment-fail 'POST */comment' '500|{}'
 run_precheck
 assert_eq "a failing reap exits 2" "2" "$CODE"
-assert_eq "a failing reap still tries the next card" "1" \
-  "$(grep -c '^project item-edit .*--id I21' "$STUB_DIR/calls.log")"
-assert_eq "a failing reap names the failed cards" "2" \
-  "$(grep -o 'issues/2[01]' <<<"$ERR" | sort -u | wc -l | tr -d ' ')"
+assert_eq "a failing reap still tries the next ticket" "move label comment" "$(mutations BM-21)"
+assert_eq "a failing reap names the failed tickets" "2" "$(grep -o 'BM-2[01]' <<<"$ERR" | sort -u | wc -l | tr -d ' ')"
 
 precheck_board
-echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
-touch "$STUB_DIR/gh-fail-issue-view"
+set_progress "BM-20|2026-11-06T17:00:00.000+0800|gusdecool/x" "BM-21|2026-11-06T11:00:00.000+0000|gusdecool/x"
+route 00-move-fail 'POST */transitions' '400|{"errorMessages":["no"]}'
+run_precheck
+assert_eq "a failed move exits 2 and the ticket is named" "2 1" \
+  "$CODE $(grep -c 'could not reap: BM-20' <<<"$ERR")"
+assert_eq "a failed move adds no label and no comment" "move" "$(mutations BM-20)"
+
+precheck_board
+set_progress "BM-20|2026-11-06T17:00:00.000+0800|gusdecool/x" "BM-21|2026-11-06T17:00:00.000+0800|gusdecool/x"
+touch "$STUB_DIR/gh-fail-pr-list"
 run_precheck
 assert_eq "unreadable activity counts as active" "1" "$CODE"
-assert_eq "unreadable activity never reaps" "0" "$(grep -c -E '^(issue (comment|edit)|project item-edit)' \
-  "$STUB_DIR/calls.log" || true)"
+assert_eq "unreadable activity never reaps" "0" "$(mutation_count)"
 
 precheck_board
-echo '{}' >"$STUB_DIR/gh-issue-view-20"
-echo '{}' >"$STUB_DIR/gh-issue-view-21"
+set_progress "BM-20||gusdecool/x" "BM-21||gusdecool/x"
 run_precheck
-assert_eq "a null updatedAt counts as active and is not reaped" "1" "$CODE"
-assert_eq "a null updatedAt never reaps" "0" "$(grep -c -E '^(issue (comment|edit)|project item-edit)' \
-  "$STUB_DIR/calls.log" || true)"
+assert_eq "a missing updated time counts as active and is not reaped" "1" "$CODE"
+assert_eq "a missing updated time never reaps" "0" "$(mutation_count)"
 
 precheck_board
-jq '.items |= map(select(.id != "I21")) | .items += [{"id":"I30","status":"In progress",
-  "content":{"type":"Issue","number":30,"repository":"acme/y","url":"https://github.com/acme/y/issues/30"}}]' \
-  "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
-cp "$STUB_DIR/items.tmp" "$STUB_DIR/gh-project-item-list"
-echo '{"updatedAt":"2026-11-06T01:00:00Z"}' >"$STUB_DIR/gh-issue-view-30"
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x" "BM-30|2026-11-06T01:00:00.000+0000|acme/y"
 run_precheck
-assert_eq "a foreign-owner In progress card is counted" "1" "$CODE"
-assert_eq "a foreign-owner In progress card is never reaped" "0" "$(grep -c 'acme/y' "$STUB_DIR/calls.log" || true)"
+assert_eq "a foreign-owner In progress ticket is counted" "1" "$CODE"
+assert_eq "a foreign-owner In progress ticket is never reaped" "00" \
+  "$(grep -c 'acme/y' "$STUB_DIR/calls.log" || true)$(jira_mentions BM-30/)"
+set_progress "BM-31|2026-11-06T01:00:00.000+0000|" "BM-20|2026-11-06T19:30:00.000+0800|gusdecool/x"
+run_precheck
+assert_eq "an unknown-repo In progress ticket is counted" "1" "$CODE"
+assert_eq "an unknown-repo In progress ticket is never reaped" "00" "$(mutation_count)$(jira_mentions BM-31/)"
 
 # Asserts the last precheck wrote exactly one stderr line. Arg: label.
 assert_one_line() { assert_eq "$1 prints exactly one stderr line" "1" "$(printf '%s\n' "$ERR" | grep -c .)"; }
@@ -668,13 +1031,12 @@ precheck_board
 run_precheck
 assert_one_line "limit reached"
 precheck_board
-jq '.items |= map(select(.status != "Todo" and .id != "I21"))' "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
-cp "$STUB_DIR/items.tmp" "$STUB_DIR/gh-project-item-list"
+set_todos
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x"
 run_precheck
-assert_one_line "no Todo card"
+assert_one_line "no Todo ticket"
 precheck_board
-jq '.items |= map(select(.id != "I21"))' "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
-cp "$STUB_DIR/items.tmp" "$STUB_DIR/gh-project-item-list"
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x"
 run_precheck pp-fail
 assert_one_line "no provider"
 cat >"$STUB_DIR/pp-broken" <<'STUB'
@@ -692,45 +1054,82 @@ run_precheck pp-broken
 LOGGED="$(cat "$BOARD_PRECHECK_LOG")"
 assert_eq "the log names the failing sub-script" "1" "$(grep -c 'pick-provider exited 2: boom' <<<"$LOGGED")"
 assert_eq "the log records the final exit" "1" "$(grep -c 'exit 2: cannot read the provider' <<<"$LOGGED")"
-touch "$STUB_DIR/gh-fail-project-item-list"
+route 00-search-fail 'GET *%22In%20progress%22*' '500|{}'
 run_precheck
-assert_eq "an unreadable board exits 2" "2" "$CODE"
+assert_eq "a Jira error while listing exits 2" "2" "$CODE"
+assert_one_line "a Jira error"
+precheck_board
+route 00-search-fail 'GET *%22Todo%22*' '500|{}'
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x"
+run_precheck
+assert_eq "an unreadable Todo list exits 2" "2" "$CODE"
 
-# board-cleanup: only a clean worktree with a merged PR is removed.
+# board-cleanup: only a clean worktree with a merged PR, or a Done ticket, is removed. Worktrees are named bm-<n>.
 CLEANUP="$REPO/skills/board-worker/scripts/board-cleanup"
+# Creates a git repo at $STUB_DIR/<name> with an origin remote.
 make_wt() {
   mkdir -p "$STUB_DIR/$1" && git -C "$STUB_DIR/$1" init -q
   git -C "$STUB_DIR/$1" remote add origin https://github.com/acme/app.git
 }
-make_wt issue-1; make_wt issue-2; echo x >"$STUB_DIR/issue-2/dirty"
-jq -n --arg a "$STUB_DIR/issue-1" --arg b "$STUB_DIR/issue-2" '{result: {worktrees: [
-  {path: $a, displayName: "issue-1", branch: "refs/heads/feat/a", isMainWorktree: false},
-  {path: $b, displayName: "issue-2", branch: "refs/heads/feat/b", isMainWorktree: false},
+make_wt bm-1; make_wt bm-2; echo x >"$STUB_DIR/bm-2/dirty"
+jq -n --arg a "$STUB_DIR/bm-1" --arg b "$STUB_DIR/bm-2" '{result: {worktrees: [
+  {path: $a, displayName: "bm-1", branch: "refs/heads/BM-1-a", isMainWorktree: false},
+  {path: $b, displayName: "bm-2", branch: "refs/heads/BM-2-b", isMainWorktree: false},
   {path: "/main", displayName: "main", branch: "refs/heads/main", isMainWorktree: true}]}}' >"$STUB_DIR/orca-worktrees"
 echo 1 >"$STUB_DIR/gh-pr-list"
+# Answers the one Jira status search with the given "KEY|Status" pairs.
+set_statuses() {
+  local issues="[]" pair
+  for pair in "$@"; do
+    issues="$(jq -c --arg k "${pair%%|*}" --arg s "${pair#*|}" \
+      '. + [{key: $k, fields: {status: {name: $s}}}]' <<<"$issues")"
+  done
+  reset_curl "200|$(jq -cn --argjson i "$issues" '{issues: $i, isLast: true}')"
+}
+set_statuses 'BM-1|In progress' 'BM-2|In progress'
 : >"$STUB_DIR/calls.log"
 OUT="$(bash "$CLEANUP")"
 # Counts calls.log lines starting with the given text.
 calls() { grep -c "^$1" "$STUB_DIR/calls.log"; }
-assert_eq "cleanup removes a clean merged worktree" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-1")"
-assert_eq "cleanup closes its terminals" "1" "$(calls "orca terminal close --worktree path:$STUB_DIR/issue-1 --all")"
-assert_eq "cleanup deletes the remote branch" "1" "$(calls "api -X DELETE repos/acme/app/git/refs/heads/feat/a")"
-assert_eq "cleanup skips a dirty worktree" "0" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-2")"
+assert_eq "cleanup removes a clean merged worktree" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/bm-1")"
+assert_eq "cleanup closes its terminals" "1" "$(calls "orca terminal close --worktree path:$STUB_DIR/bm-1 --all")"
+assert_eq "cleanup deletes the remote branch" "1" "$(calls "api -X DELETE repos/acme/app/git/refs/heads/BM-1-a")"
+assert_eq "cleanup skips a dirty worktree" "0" "$(calls "orca worktree rm --worktree path:$STUB_DIR/bm-2")"
+assert_eq "cleanup asks Jira once for both keys" "1 1" \
+  "$(wc -l <"$STUB_DIR/curl-calls" | tr -d ' ') $(grep -c 'key%20in%20%28BM-1%2CBM-2%29' "$STUB_DIR/curl-calls")"
+assert_eq "cleanup never calls gh project" "0" "$(calls "project")"
 echo 0 >"$STUB_DIR/gh-pr-list"
-rm -f "$STUB_DIR/gh-fail-project-item-list"
-echo '{"items": [{"status": "In progress", "content": {"repository": "acme/app", "number": 1}}]}' \
-  >"$STUB_DIR/gh-project-item-list"
 : >"$STUB_DIR/calls.log"
 bash "$CLEANUP" >/dev/null
-assert_eq "cleanup skips an unmerged PR whose card is not Done" "0" "$(calls "orca worktree rm")"
-echo '{"items": [{"status": "Done", "content": {"repository": "acme/app", "number": 1}}]}' \
-  >"$STUB_DIR/gh-project-item-list"
+assert_eq "cleanup skips an unmerged PR whose ticket is not Done" "0" "$(calls "orca worktree rm")"
+set_statuses 'BM-1|Done' 'BM-2|Done'
 : >"$STUB_DIR/calls.log"
 bash "$CLEANUP" >/dev/null
-assert_eq "cleanup removes a Done card's worktree" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-1")"
+assert_eq "cleanup removes a Done ticket's worktree" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/bm-1")"
 assert_eq "cleanup keeps the remote branch when the PR is not merged" "0" "$(calls "api -X DELETE")"
 assert_eq "cleanup still skips a dirty Done worktree" "0" \
-  "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-2")"
+  "$(calls "orca worktree rm --worktree path:$STUB_DIR/bm-2")"
+set_statuses 'BM-1|Done (old)'
+: >"$STUB_DIR/calls.log"
+bash "$CLEANUP" >/dev/null
+assert_eq "cleanup needs the status name to be exactly Done" "0" "$(calls "orca worktree rm")"
+reset_curl '500|{}'
+: >"$STUB_DIR/calls.log"
+OUT="$(bash "$CLEANUP")"
+assert_eq "a Jira failure does not clean an unmerged worktree" "0" "$(calls "orca worktree rm")"
+assert_eq "a Jira failure prints one warn line" "1" "$(grep -c '^warn: could not read ticket statuses' <<<"$OUT")"
+echo 1 >"$STUB_DIR/gh-pr-list"
+reset_curl '500|{}'
+: >"$STUB_DIR/calls.log"
+bash "$CLEANUP" >/dev/null
+assert_eq "a Jira failure still cleans a merged PR" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/bm-1")"
+# A worktree named for another project is not swept.
+make_wt issue-9
+jq -n --arg a "$STUB_DIR/issue-9" '{result: {worktrees: [
+  {path: $a, displayName: "issue-9", branch: "refs/heads/old", isMainWorktree: false}]}}' >"$STUB_DIR/orca-worktrees"
+: >"$STUB_DIR/calls.log"
+bash "$CLEANUP" >/dev/null
+assert_eq "cleanup ignores worktrees not named bm-<n>" "0" "$(calls "orca worktree rm")"
 
 if [ "$FAILS" -eq 0 ]; then echo "All board-worker tests passed"; fi
 exit "$FAILS"

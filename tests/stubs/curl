@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Test stub for curl: logs one argument per line to $STUB_DIR/curl-argv, copies stdin to $STUB_DIR/curl-stdin and the
+# --data-binary @FILE body to $STUB_DIR/curl-body, and appends "METHOD URL BODY" to $STUB_DIR/curl-calls.
+# Answers come from route files in $STUB_DIR/curl-routes/ when that directory has any: line 1 is a glob matched against
+# "METHOD URL", line 2 is "<code>|<json>" (first match by file name wins, persistent). With no matching route, or no
+# routes, answers come from $STUB_DIR/curl-responses, one "<code>|<json>" line per call, consumed in order (500|{} when
+# empty). Prints the body then "\n<code>" like --write-out.
+set -uo pipefail
+
+printf '%s\n' "$@" >>"$STUB_DIR/curl-argv"
+cat >"$STUB_DIR/curl-stdin"
+prev=""
+method="GET"
+body=""
+for arg in "$@"; do
+  if [ "$prev" = "--data-binary" ] && [ "${arg#@}" != "$arg" ]; then
+    cp "${arg#@}" "$STUB_DIR/curl-body"
+    body="$(jq -c . "${arg#@}" 2>/dev/null || cat "${arg#@}")"
+  fi
+  if [ "$prev" = "--request" ]; then method="$arg"; fi
+  prev="$arg"
+done
+url="${*: -1}"
+printf '%s %s %s\n' "$method" "$url" "$body" >>"$STUB_DIR/curl-calls"
+[ ! -f "$STUB_DIR/curl-fail" ] || exit 7
+line=""
+if [ -d "$STUB_DIR/curl-routes" ]; then
+  for route in "$STUB_DIR"/curl-routes/*; do
+    [ -f "$route" ] || continue
+    pattern="$(head -n 1 "$route")"
+    # shellcheck disable=SC2053 # the pattern is a glob on purpose
+    if [[ "$method $url" == $pattern ]]; then
+      line="$(sed -n 2p "$route")"
+      break
+    fi
+  done
+fi
+if [ -z "$line" ] && [ -s "$STUB_DIR/curl-responses" ]; then
+  line="$(head -n 1 "$STUB_DIR/curl-responses")"
+  tail -n +2 "$STUB_DIR/curl-responses" >"$STUB_DIR/curl-responses.next"
+  mv "$STUB_DIR/curl-responses.next" "$STUB_DIR/curl-responses"
+fi
+[ -n "$line" ] || line='500|{}'
+printf '%s\n%s' "${line#*|}" "${line%%|*}"

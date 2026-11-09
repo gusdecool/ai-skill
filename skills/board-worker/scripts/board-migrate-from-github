@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# One-off migration of the open cards of a GitHub Project into Jira tickets. Dry run unless --apply is given.
+# Usage: board-migrate-from-github --owner <org> --project <number> [--apply] [--limit <n>]
+# A card is migrated when it is an Issue, not Done, in an allowed owner's repo, and has no "Moved to Jira:" comment.
+# Each migrated card gets a Jira ticket (component = repo, priority mapped, description = GitHub link + the body
+# converted to wiki markup), the matching status (In progress becomes HITL plus the HITL label) and a
+# "Moved to Jira: <url>" comment on the GitHub issue, which stays open. "Auto merge: true" is never carried over.
+# Output: one line per card (would migrate / migrated / skip / fail) and a summary. Exits 0, 1 when a card failed,
+# 2 on a usage error or when the board cannot be read.
+set -euo pipefail
+
+SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+USAGE="usage: board-migrate-from-github --owner <org> --project <number> [--apply] [--limit <n>]"
+
+# Prints the usage line and exits 2.
+usage() { echo "$USAGE" >&2; exit 2; }
+
+OWNER=""
+PROJECT=""
+LIMIT=500
+APPLY=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --apply) APPLY=1; shift ;;
+    --owner | --project | --limit)
+      [ "$#" -ge 2 ] || usage
+      case "$1" in
+        --owner) [[ "$2" =~ ^[A-Za-z0-9][A-Za-z0-9-]*$ ]] || usage; OWNER="$2" ;;
+        --project) [[ "$2" =~ ^[0-9]+$ ]] || usage; PROJECT="$2" ;;
+        --limit) [[ "$2" =~ ^[0-9]+$ ]] || usage; LIMIT="$2" ;;
+      esac
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
+[ -n "$OWNER" ] && [ -n "$PROJECT" ] || usage
+
+source "$SCRIPTS/board-lib.sh"
+
+WORK="$(mktemp -d)"
+# Removes the temporary directory.
+# shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
+cleanup() { rm -rf "$WORK"; }
+trap cleanup EXIT
+
+MIGRATED=0
+SKIPPED=0
+FAILED=0
+
+# Converts GitHub Markdown on stdin to Jira wiki markup on stdout: headings, bold, inline code and fenced blocks.
+# Text inside fenced blocks and every other construct pass through unchanged.
+md_to_wiki() {
+  awk '
+    function bold(s,   out, inner) {
+      out = ""
+      while (match(s, /\*\*[^*]+\*\*/)) {
+        inner = substr(s, RSTART + 2, RLENGTH - 4)
+        out = out substr(s, 1, RSTART - 1) "*" inner "*"
+        s = substr(s, RSTART + RLENGTH)
+      }
+      return out s
+    }
+    function inline(s,   out, a, rest, b) {
+      out = ""
+      while ((a = index(s, "`")) > 0) {
+        rest = substr(s, a + 1)
+        b = index(rest, "`")
+        if (b <= 1) break
+        out = out bold(substr(s, 1, a - 1)) "{{" substr(rest, 1, b - 1) "}}"
+        s = substr(rest, b + 1)
+      }
+      return out bold(s)
+    }
+    /^[ \t]*```/ {
+      if (!infence) {
+        lang = $0
+        sub(/^[ \t]*```[ \t]*/, "", lang)
+        sub(/[ \t].*$/, "", lang)
+        if (lang !~ /^[A-Za-z0-9_+#.-]+$/) lang = ""
+        print (lang == "" ? "{code}" : "{code:" lang "}")
+        infence = 1
+      } else {
+        print "{code}"
+        infence = 0
+      }
+      next
+    }
+    infence { print; next }
+    {
+      if (match($0, /^#+/) && RLENGTH <= 6 && substr($0, RLENGTH + 1, 1) ~ /[ \t]/) {
+        n = RLENGTH
+        text = substr($0, n + 1)
+        sub(/^[ \t]+/, "", text)
+        print "h" n ". " inline(text)
+      } else {
+        print inline($0)
+      }
+    }'
+}
+
+# Prints one result line and counts it: kind is migrated, skipped or failed.
+report() {
+  local kind="$1"
+  shift
+  printf '%s\n' "$*"
+  case "$kind" in
+    migrated) MIGRATED=$((MIGRATED + 1)) ;;
+    skipped) SKIPPED=$((SKIPPED + 1)) ;;
+    *) FAILED=$((FAILED + 1)) ;;
+  esac
+}
+
+# Prints the first line of a stderr file, or a fallback, for a failure reason.
+reason_of() {
+  local line=""
+  line="$(head -n 1 "$1" 2>/dev/null | tr -d '\r')" || line=""
+  printf '%s' "${line:-unknown error}"
+}
+
+# Migrates one board item given as JSON: applies the filters, then plans (dry run) or performs the migration.
+migrate_card() {
+  local item="$1" type status priority repo number url title labels target prio ref
+  local key="" browse="" created note="" errs="" err
+  type="$(jq -r '.content.type // ""' <<<"$item")"
+  repo="$(jq -r '.content.repository // ""' <<<"$item")"
+  number="$(jq -r '.content.number // ""' <<<"$item")"
+  url="$(jq -r '.content.url // ""' <<<"$item")"
+  status="$(jq -r '.status // ""' <<<"$item")"
+  priority="$(jq -r '.priority // ""' <<<"$item")"
+  ref="${repo:-unknown}#${number:-?}"
+  if [ "$type" != "Issue" ]; then report skipped "skip $ref: not an issue"; return 0; fi
+  if [ "$status" = "Done" ]; then report skipped "skip $ref: status Done"; return 0; fi
+  if ! [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$number" =~ ^[0-9]+$ ]]; then
+    report skipped "skip $ref: invalid repository or number"
+    return 0
+  fi
+  if ! board_owner_allowed "$repo"; then report skipped "skip $ref: owner not allowed"; return 0; fi
+  if [ "$url" != "https://github.com/$repo/issues/$number" ]; then
+    report skipped "skip $ref: unexpected issue URL"
+    return 0
+  fi
+  case "$status" in
+    "" | Backlog) target="Backlog" ;;
+    Todo | QA | HITL) target="$status" ;;
+    "In progress") target="HITL" ;;
+    *) report failed "fail $ref: unknown status '$status'"; return 0 ;;
+  esac
+  case "$priority" in High | Medium | Low) prio="$priority" ;; *) prio="Medium" ;; esac
+  # Skip a card that already carries a "Moved to Jira:" comment; a read failure fails the card.
+  if ! created="$(gh issue view "$url" --json comments \
+    --jq '[.comments[].body | select(startswith("Moved to Jira:"))] | length' 2>"$WORK/err")" \
+    || ! [[ "$created" =~ ^[0-9]+$ ]]; then
+    report failed "fail $ref: cannot read the issue comments"
+    return 0
+  fi
+  if [ "$created" -gt 0 ]; then report skipped "skip $ref: already moved to Jira"; return 0; fi
+  jq -r '.content.body // ""' <<<"$item" >"$WORK/body"
+  if grep -qiE '^[[:space:]]*Auto merge:[[:space:]]*true[[:space:]]*$' "$WORK/body"; then
+    note=" (auto merge not carried over)"
+  fi
+  if [ "$APPLY" -eq 0 ]; then
+    report migrated "would migrate $ref -> $target [$prio]$note"
+    return 0
+  fi
+
+  # Build the summary and the description file: link line, blank line, converted body without the Auto merge line.
+  title="$(jq -r '.content.title // ""' <<<"$item" | tr '\r\n' '  ')"
+  title="${title#"${title%%[![:space:]]*}"}"
+  title="${title%"${title##*[![:space:]]}"}"
+  title="${title:0:255}"
+  if [ -z "${title//[[:space:]]/}" ]; then report failed "fail $ref: empty title"; return 0; fi
+  if [ -n "$note" ]; then
+    { grep -viE '^[[:space:]]*Auto merge:[[:space:]]*true[[:space:]]*$' "$WORK/body" || true; } >"$WORK/body.clean"
+    mv "$WORK/body.clean" "$WORK/body"
+  fi
+  { printf 'GitHub: %s\n\n' "$url"; md_to_wiki <"$WORK/body"; } >"$WORK/desc"
+
+  # Create the ticket; it starts in Backlog.
+  if ! created="$("$SCRIPTS/board-ticket" create --summary "$title" --component "$repo" \
+    --description-file "$WORK/desc" --priority "$prio" 2>"$WORK/err")"; then
+    report failed "fail $ref: create failed: $(reason_of "$WORK/err")"
+    return 0
+  fi
+  key="$(jq -er '.key' <<<"$created" 2>/dev/null)" || key=""
+  browse="$(jq -er '.url' <<<"$created" 2>/dev/null)" || browse=""
+  if ! [[ "$key" =~ ^[A-Z][A-Z0-9]+-[0-9]+$ && -n "$browse" ]]; then
+    report failed "fail $ref: create returned no usable key"
+    return 0
+  fi
+
+  # Status, label and the GitHub comment: a failure is remembered, the other steps still run.
+  if [ "$target" != "Backlog" ]; then
+    "$SCRIPTS/board-set-status" "$key" "$target" 2>"$WORK/err" >/dev/null \
+      || errs="$errs; status $target failed: $(reason_of "$WORK/err")"
+  fi
+  labels="$(jq -r '(.labels // [])[]' <<<"$item" 2>/dev/null)" || labels=""
+  if [ "$status" = "In progress" ] || grep -qx 'HITL' <<<"$labels"; then
+    "$SCRIPTS/board-ticket" label "$key" add HITL 2>"$WORK/err" >/dev/null \
+      || errs="$errs; label HITL failed: $(reason_of "$WORK/err")"
+  fi
+  gh issue comment "$url" --body "Moved to Jira: $browse" 2>"$WORK/err" >/dev/null \
+    || errs="$errs; GitHub comment failed: $(reason_of "$WORK/err")"
+  if [ -n "$errs" ]; then
+    err="${errs#; }"
+    report failed "fail $ref: $key created but $err"
+    return 0
+  fi
+  report migrated "migrated $ref -> $key $target$note"
+}
+
+# Reads the board; a failure here is fatal (exit 2).
+items="$(gh project item-list "$PROJECT" --owner "$OWNER" --format json --limit "$LIMIT" 2>"$WORK/err")" \
+  || { echo "board-migrate-from-github: cannot read the board: $(reason_of "$WORK/err")" >&2; exit 2; }
+jq -e '.items | type == "array"' <<<"$items" >/dev/null 2>&1 \
+  || { echo "board-migrate-from-github: unexpected board output" >&2; exit 2; }
+
+while IFS= read -r card; do
+  migrate_card "$card"
+done < <(jq -c '.items[]' <<<"$items")
+
+suffix=""
+[ "$APPLY" -eq 1 ] || suffix=" (dry run)"
+echo "summary: $MIGRATED migrated, $SKIPPED skipped, $FAILED failed$suffix"
+[ "$FAILED" -eq 0 ] || exit 1
