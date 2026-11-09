@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Test stub for curl: logs one argument per line to $STUB_DIR/curl-argv, copies stdin to $STUB_DIR/curl-stdin and the
+# --data-binary @FILE body to $STUB_DIR/curl-body. Answers come from $STUB_DIR/curl-responses, one "<code>|<json>"
+# line per call, consumed in order (500|{} when empty). Prints the body then "\n<code>" like --write-out.
+set -uo pipefail
+
+printf '%s\n' "$@" >>"$STUB_DIR/curl-argv"
+cat >"$STUB_DIR/curl-stdin"
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--data-binary" ] && [ "${arg#@}" != "$arg" ]; then cp "${arg#@}" "$STUB_DIR/curl-body"; fi
+  prev="$arg"
+done
+[ ! -f "$STUB_DIR/curl-fail" ] || exit 7
+line=""
+if [ -s "$STUB_DIR/curl-responses" ]; then
+  line="$(head -n 1 "$STUB_DIR/curl-responses")"
+  tail -n +2 "$STUB_DIR/curl-responses" >"$STUB_DIR/curl-responses.next"
+  mv "$STUB_DIR/curl-responses.next" "$STUB_DIR/curl-responses"
+fi
+[ -n "$line" ] || line='500|{}'
+printf '%s\n%s' "${line#*|}" "${line%%|*}"
