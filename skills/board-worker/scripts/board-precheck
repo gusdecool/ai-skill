@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Decides whether the board worker should start a new worker now.
 # Usage: board-precheck
-# Exits 0 only when a pick-able Todo card exists, fewer than 2 cards are In progress (after reaping stale ones) and
-# pick-provider --orchestrator exits 0 (claude, the orchestrator, has quota). Otherwise exits 1 with one line on stderr naming the failed condition; 2 on gh failure.
-# Reaper: an In progress card whose issue and linked PRs show no activity for 2 hours gets the HITL label, moves to
-# HITL and gets a comment with the last activity time, the 2-hour rule and the last PR seen.
-# Activity is read per card: `gh issue view --json updatedAt` and `gh pr list --search "#<n>"` (PRs that mention it).
-# Env: PICK_PROVIDER (path of pick-provider), NOW_EPOCH (clock in seconds, for tests), TODAY (passed to pick-next).
+# Exits 0 only when a pick-able Todo ticket exists, fewer than 2 tickets are In progress (after reaping stale ones)
+# and pick-provider --orchestrator exits 0 (claude, the orchestrator, has quota). Otherwise exits 1 with one line on
+# stderr naming the failed condition; 2 on a Jira or script failure.
+# Reaper: an In progress ticket with no ticket or linked PR activity for 2 hours gets the HITL label, moves to HITL
+# and gets a comment with the last activity time, the 2-hour rule and the last PR seen.
+# Activity is read per ticket: the Jira `updated` field and `gh pr list --search "<KEY>"` (PRs that mention it).
+# Env: PICK_PROVIDER (path of pick-provider), NOW_EPOCH (clock in seconds, for tests).
 set -euo pipefail
 
 dir="$(dirname "${BASH_SOURCE[0]}")"
 source "$dir/board-lib.sh"
 
-# Seconds of silence after which an In progress card counts as stale.
+# Seconds of silence after which an In progress ticket counts as stale.
 STALE_SECONDS=7200
 
 # Appends a timestamped line to the precheck log (BOARD_PRECHECK_LOG, default ~/.config/board-worker/precheck.log).
@@ -22,72 +23,88 @@ log() {
   { mkdir -p "$(dirname "$file")" && printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >>"$file"; } 2>/dev/null || true
 }
 
-# Prints an error and exits 2 (gh or script failure, as opposed to a plain skip).
+# Prints an error and exits 2 (Jira or script failure, as opposed to a plain skip).
 die() { log "exit 2: $*"; echo "board-precheck: $*" >&2; exit 2; }
 
 # Prints one line naming the failed condition and exits 1.
 fail() { log "exit 1: $*"; echo "board-precheck: $*" >&2; exit 1; }
 
-# Prints the In progress issue cards as JSON lines.
-in_progress_cards() {
-  jq -c '.items[] | select(.status == "In progress" and .content.type == "Issue")' <<<"$1"
-}
-
-# Prints "<last activity ISO time> <last PR url or none>" for an issue, taking the latest of the issue and its PRs.
-# Fails when the activity cannot be read, including an issue without an updatedAt.
+# Prints "<last activity epoch> <last activity ISO UTC time> <last PR url or none>" for a ticket, taking the latest of
+# the ticket's Jira update time and its PRs. Args: Jira updated time, repo, key. Jira times carry a fraction and a
+# +HHMM offset (2026-11-09T21:35:12.123+0800): the local time is read as UTC, then the offset is subtracted.
+# Fails when the activity cannot be read, including a ticket without an updated time.
 last_activity() {
-  local issue prs
-  issue="$(gh issue view "$1" --json updatedAt)" || return 1
-  prs="$(gh pr list --repo "$2" --state all --limit 100 --search "#$3 sort:updated-desc" \
+  local prs
+  prs="$(gh pr list --repo "$2" --state all --limit 100 --search "$3 sort:updated-desc" \
     --json updatedAt,url)" || return 1
-  jq -rn --argjson issue "$issue" --argjson prs "$prs" '
-    if ($issue.updatedAt | type) != "string" then error("issue has no updatedAt") else . end
-    | ([$prs[] | select(.updatedAt | type == "string")] | sort_by(.updatedAt) | last) as $pr
-    | [$issue.updatedAt, $pr.updatedAt // empty] | max as $latest
-    | "\($latest) \($pr.url // "none")"'
+  jq -rn --arg updated "$1" --argjson prs "$prs" '
+    def epoch:
+      capture("^(?<d>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>Z|[+-][0-9]{2}:?[0-9]{2})$")
+      | (.d + "Z" | fromdateiso8601) as $local
+      | (if .z == "Z" then 0 else
+          ((.z[0:1] + "1" | tonumber)
+           * ((.z[1:3] | tonumber) * 3600 + (.z[1:] | gsub(":"; "") | .[2:4] | tonumber) * 60))
+         end) as $offset
+      | $local - $offset;
+    ([$prs[] | select(.updatedAt | type == "string") | {epoch: (.updatedAt | epoch), url: .url}]
+      | sort_by(.epoch) | last) as $pr
+    | ([($updated | epoch), $pr.epoch // empty] | max) as $latest
+    | "\($latest) \($latest | todate) \($pr.url // "none")"'
 }
 
-# Moves a stale card to HITL, then labels HITL, then comments why. Args: url, last-time, last-pr.
-# The move comes first so a half-done reap still frees the slot; the comment last, as it bumps updatedAt.
+# Moves a stale ticket to HITL, then labels HITL, then comments why. Args: key, last-time, last-pr.
+# The move comes first so a half-done reap still frees the slot; the comment last, as it bumps the update time.
 # Returns 1 with a message when a step fails.
-reap_card() {
+reap_ticket() {
+  local body
   "$dir/board-set-status" "$1" HITL 2>/dev/null || { echo "cannot move $1 to HITL" >&2; return 1; }
-  gh issue edit "$1" --add-label HITL >/dev/null || { echo "cannot label $1" >&2; return 1; }
-  gh issue comment "$1" --body "No activity since $2 (no issue or PR update for 2 hours, the board worker rule), \
-so this card was moved to the HITL column with the HITL label. Last PR seen: $3." >/dev/null \
+  jira_api PUT "/rest/api/2/issue/$1" '{"update":{"labels":[{"add":"HITL"}]}}' >/dev/null 2>&1 \
+    || { echo "cannot label $1" >&2; return 1; }
+  body="$(jq -nc --arg t "No activity since $2 (no ticket or PR update for 2 hours, the board worker rule), \
+so this ticket was moved to the HITL column with the HITL label. Last PR seen: $3." '{body: $t}')" \
+    || { echo "cannot build the comment for $1" >&2; return 1; }
+  jira_api POST "/rest/api/2/issue/$1/comment" "$body" >/dev/null 2>&1 \
     || { echo "cannot comment on $1" >&2; return 1; }
 }
 
-items="$(board_items)" || die "cannot list the board"
+jira_load_config || exit 2
+# On failure the search prints only its error line, which goes into the message.
+tickets="$(jira_search "project = $JIRA_PROJECT AND status = \"In progress\"" "summary,components,updated" 2>&1)" \
+  || die "cannot list the In progress tickets: ${tickets//$'\n'/ }"
 now="${NOW_EPOCH:-$(date +%s)}"
 active=0
 failed=""
-while IFS= read -r card; do
-  [ -n "$card" ] || continue
-  url="$(jq -r '.content.url' <<<"$card")"
-  repo="$(jq -r '.content.repository' <<<"$card")"
-  number="$(jq -r '.content.number' <<<"$card")"
-  # A card whose activity cannot be read, or of a foreign owner, counts as active and is never reaped.
-  if board_owner_allowed "$repo" && info="$(last_activity "$url" "$repo" "$number")"; then
-    last="${info%% *}"
-    last_epoch="$(jq -rn --arg t "$last" '$t | fromdateiso8601')"
+while IFS= read -r ticket; do
+  [ -n "$ticket" ] || continue
+  key="$(jq -r '.key' <<<"$ticket")"
+  repo="$(jq -r 'if (.fields.components | type) == "array" and (.fields.components | length) == 1
+    and ((.fields.components[0].name // "") | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"))
+    then .fields.components[0].name else "" end' <<<"$ticket")"
+  updated="$(jq -r '.fields.updated // ""' <<<"$ticket")"
+  # A ticket with an unknown repo, one whose activity cannot be read, or of a foreign owner counts as active and is
+  # never reaped.
+  if [ -n "$repo" ] && board_owner_allowed "$repo" \
+    && info="$(last_activity "$updated" "$repo" "$key" 2>/dev/null)"; then
+    last_epoch="${info%% *}"
+    rest="${info#* }"
+    last="${rest%% *}"
     if [ $((now - last_epoch)) -ge "$STALE_SECONDS" ]; then
-      # A failed reap is remembered and reported at the end; the loop keeps going and the card still counts.
-      if reap_card "$url" "$last" "${info#* }"; then continue; fi
-      failed="$failed $url"
+      # A failed reap is remembered and reported at the end; the loop keeps going and the ticket still counts.
+      if reap_ticket "$key" "$last" "${rest#* }"; then continue; fi
+      failed="$failed $key"
     fi
   fi
   active=$((active + 1))
-done < <(in_progress_cards "$items")
+done < <(jq -c '.[]' <<<"$tickets")
 
 [ -z "$failed" ] || die "could not reap:$failed"
-[ "$active" -lt 2 ] || fail "$active cards are In progress, the limit is 2"
+[ "$active" -lt 2 ] || fail "$active tickets are In progress, the limit is 2"
 # Sub-script stderr is dropped so a skip prints exactly one line; exit 1 means "no", exit 2 means "cannot tell".
 code=0
 sub_err="$("$dir/board-pick-next" --dry-run 2>&1 >/dev/null)" || code=$?
 [ "$code" -eq 0 ] || log "board-pick-next exited $code: $sub_err"
-[ "$code" -ne 1 ] || fail "no pick-able Todo card"
-[ "$code" -eq 0 ] || die "cannot read the board for a Todo card"
+[ "$code" -ne 1 ] || fail "no pick-able Todo ticket"
+[ "$code" -eq 0 ] || die "cannot read the board for a Todo ticket"
 code=0
 sub_err="$("${PICK_PROVIDER:-$dir/pick-provider}" --orchestrator 2>&1 >/dev/null)" || code=$?
 [ "$code" -eq 0 ] || log "pick-provider exited $code: $sub_err"

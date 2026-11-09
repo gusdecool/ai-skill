@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Picks the next Todo card the worker should take.
+# Picks the next Todo ticket the worker should take.
 # Usage: board-pick-next [--dry-run]
-# Prints {"repo","number","url","itemId"}; exits 0, or 1 when no card qualifies, 2 when the board cannot be read.
-# Order: Priority (High, Medium, Low, none), then current Iteration, then lowest issue number (oldest).
-# A Todo card that is not ready moves to HITL, then gets the HITL label and a comment naming what is missing.
-# --dry-run only skips unready cards: it never comments, labels or moves anything.
-# TODAY (YYYY-MM-DD) overrides the date used to find the current iteration.
+# Prints {"repo","key","url"}; exits 0, or 1 when no ticket qualifies, 2 when Jira cannot be read.
+# Order: Priority (Highest, High, Medium, Low, Lowest, none), then lowest ticket number (oldest).
+# The repo of a ticket is its single component, named owner/repo. A ticket of a repo whose owner is not allowed is
+# ignored untouched; a ticket with no valid component stays a candidate so the readiness check parks it.
+# A Todo ticket that is not ready moves to HITL, then gets the HITL label and a comment naming what is missing.
+# --dry-run only skips unready tickets: it never comments, labels or moves anything.
 set -euo pipefail
 
 dry_run=0
@@ -17,54 +18,63 @@ source "$dir/board-lib.sh"
 # Prints an error and exits 2.
 die() { echo "board-pick-next: $*" >&2; exit 2; }
 
-# Prints the allowed Todo cards as JSON lines, best first.
+# Prints the Todo tickets of allowed owners (and of unknown repos) as JSON lines {key,repo}, best first.
 sorted_candidates() {
-  jq -c --arg today "${TODAY:-$(date +%F)}" --arg allowed "$BOARD_ALLOWED_OWNERS" '
-    def rank: {"High": 0, "Medium": 1, "Low": 2}[.priority // ""] // 3;
-    def end_date: ((.startDate + "T00:00:00Z" | fromdate) + (.duration * 86400)) | todate | .[0:10];
-    def current: if (.iteration | type) == "object" and (.iteration.startDate | type) == "string"
-        and (.iteration.duration | type) == "number"
-      then (.iteration.startDate <= $today and $today < (.iteration | end_date)) else false end;
-    [.items[] | select(.status == "Todo" and .content.type == "Issue")
-     | select(.content.repository | split("/")[0] | IN($allowed | split(",")[]))]
-    | sort_by([rank, (if current then 0 else 1 end), .content.number])
-    | .[]' <<<"$1"
+  jq -c --arg allowed "$BOARD_ALLOWED_OWNERS" '
+    def rank: {"Highest": 0, "High": 1, "Medium": 2, "Low": 3, "Lowest": 4}[.fields.priority.name // ""] // 5;
+    def repo: if (.fields.components | type) == "array" and (.fields.components | length) == 1
+        and ((.fields.components[0].name // "") | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"))
+      then .fields.components[0].name else "" end;
+    [.[] | {key: .key, repo: repo, rank: rank, number: (.key | sub("^.*-"; "") | tonumber)}
+     | select(.repo == "" or (.repo | split("/")[0] | IN($allowed | split(",")[])))]
+    | sort_by([.rank, .number])
+    | .[] | {key, repo}' <<<"$1"
 }
 
-# Moves a card the worker will not take to HITL, then labels and comments on it. Args: issue-url, reason.
+# Moves a ticket the worker will not take to HITL, then labels and comments on it. Args: key, reason.
 # The move comes first so a failed move cannot repeat the comment on every tick.
-park_card() {
+park_ticket() {
+  local body
   "$dir/board-set-status" "$1" HITL || die "cannot park $1"
-  gh issue edit "$1" --add-label HITL >/dev/null || die "cannot park $1"
-  gh issue comment "$1" --body "$2 Moved to HITL." >/dev/null || die "cannot park $1"
+  jira_api PUT "/rest/api/2/issue/$1" '{"update":{"labels":[{"add":"HITL"}]}}' >/dev/null || die "cannot park $1"
+  body="$(jq -nc --arg t "$2 Moved to HITL." '{body: $t}')" || die "cannot park $1"
+  jira_api POST "/rest/api/2/issue/$1/comment" "$body" >/dev/null || die "cannot park $1"
 }
 
-items="$(board_items)" || die "cannot list the board"
-candidates="$(sorted_candidates "$items")" || die "cannot sort the board items"
-while IFS= read -r card; do
-  [ -n "$card" ] || continue
-  url="$(jq -r '.content.url' <<<"$card")"
-  # Skip cards in a repo whose visibility the config blocks (checked by script before any worker exists).
-  # An unreadable visibility is left alone: fail closed.
-  vrc=0; board_visibility_blocked "$(jq -r '.content.repository' <<<"$card")" || vrc=$?
-  if [ "$vrc" -eq 0 ]; then
-    [ "$dry_run" -eq 1 ] || park_card "$url" \
-      "Ignored by the board worker: this repo's visibility is blocked by your board-worker config."
-    continue
-  elif [ "$vrc" -ne 1 ]; then
-    echo "board-pick-next: skipping $url, cannot read the repo visibility" >&2
-    continue
+jira_load_config || exit 2
+# On failure the search prints only its error line, which goes into the message.
+items="$(jira_search "project = $JIRA_PROJECT AND status = \"Todo\"" \
+  "summary,priority,components,labels,created" 2>&1)" \
+  || die "cannot list the Todo tickets: ${items//$'\n'/ }"
+candidates="$(sorted_candidates "$items")" || die "cannot sort the Todo tickets"
+while IFS= read -r ticket; do
+  [ -n "$ticket" ] || continue
+  key="$(jq -r '.key' <<<"$ticket")"
+  repo="$(jq -r '.repo' <<<"$ticket")"
+  # Skip tickets in a repo whose visibility the config blocks (checked by script before any worker exists).
+  # An unreadable visibility is left alone: fail closed. A ticket with an unknown repo goes to the readiness check.
+  if [ -n "$repo" ]; then
+    vrc=0; board_visibility_blocked "$repo" || vrc=$?
+    if [ "$vrc" -eq 0 ]; then
+      [ "$dry_run" -eq 1 ] || park_ticket "$key" \
+        "Ignored by the board worker: this repo's visibility is blocked by your board-worker config."
+      continue
+    elif [ "$vrc" -ne 1 ]; then
+      echo "board-pick-next: skipping $key, cannot read the repo visibility" >&2
+      continue
+    fi
   fi
-  # Skip and handle cards whose issue is not ready; exit 2 from the check means unreadable, so leave it alone.
-  if check="$("$dir/board-check-ready" "$url")"; then
-    jq -c '{repo: .content.repository, number: .content.number, url: .content.url, itemId: .id}' <<<"$card"
+  # Skip and handle tickets that are not ready; empty output from the check means unreadable, so leave it alone.
+  if check="$("$dir/board-check-ready" "$key")"; then
+    jq -nc --arg repo "$repo" --arg key "$key" --arg site "$JIRA_SITE" \
+      '{repo: $repo, key: $key, url: "\($site)/browse/\($key)"}'
     exit 0
   elif [ -n "$check" ] && [ "$dry_run" -eq 1 ]; then
     continue
   elif [ -n "$check" ]; then
-    park_card "$url" "Not ready for the board worker. Missing: $(jq -r '.missing | join(", ")' <<<"$check")."
+    park_ticket "$key" "Not ready for the board worker. Missing: $(jq -r '.missing | join(", ")' <<<"$check")."
   else
-    echo "board-pick-next: skipping $url, cannot read it" >&2
+    echo "board-pick-next: skipping $key, cannot read it" >&2
   fi
 done <<<"$candidates"
 exit 1

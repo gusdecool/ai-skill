@@ -40,7 +40,8 @@ set_body() { jq -n --arg body "$1" '{body: $body}' >"$STUB_DIR/gh-output"; }
 
 # Clears the curl stub logs and queues the given responses, one "<code>|<json>" per argument.
 reset_curl() {
-  rm -f "$STUB_DIR"/curl-argv "$STUB_DIR"/curl-stdin "$STUB_DIR"/curl-body "$STUB_DIR"/curl-fail
+  rm -f "$STUB_DIR"/curl-argv "$STUB_DIR"/curl-stdin "$STUB_DIR"/curl-body "$STUB_DIR"/curl-fail "$STUB_DIR"/curl-calls
+  rm -rf "$STUB_DIR/curl-routes"
   : >"$STUB_DIR/curl-responses"
   local r
   for r in "$@"; do printf '%s\n' "$r" >>"$STUB_DIR/curl-responses"; done
@@ -240,88 +241,185 @@ assert_eq "a component without an owner fails" '["Component"]' "$(jq -c .missing
 run_check $'## Goal\nX\n\n## Done when\nY\n' '[{"name":"bungamata/bm app"}]'
 assert_eq "a component with a space fails" '["Component"]' "$(jq -c .missing <<<"$OUT")"
 
-# Resets the stub state and loads the board fixtures; every issue is ready unless a test says otherwise.
-reset_board() {
-  rm -f "$STUB_DIR"/gh-* "$STUB_DIR/calls.log"
-  cp "$FIX/items.json" "$STUB_DIR/gh-project-item-list"
-  cp "$FIX/fields.json" "$STUB_DIR/gh-project-field-list"
-  cp "$FIX/project.json" "$STUB_DIR/gh-project-view"
-  echo '{"visibility":"PRIVATE"}' >"$STUB_DIR/gh-repo-view"
-  set_body $'## Goal\nX\n\n## Done when\nY\n'
+# Writes a Jira route for the curl stub. Args: route name, a glob matched against "METHOD URL", "<code>|<json>".
+# Routes are persistent and the first by name wins, so a "00-" name overrides a default "50-" route.
+route() {
+  mkdir -p "$STUB_DIR/curl-routes"
+  printf '%s\n%s\n' "$2" "$3" >"$STUB_DIR/curl-routes/$1"
 }
 
-# Makes the issue with the given number unready by giving it an empty body.
-make_unready() { echo '{"body":""}' >"$STUB_DIR/gh-issue-view-$1"; }
+READY_DESC=$'## Goal\nX\n\n## Done when\nY\n'
+# Replaces the Todo tickets of the fake Jira board. Each argument is "KEY|Priority|component", the last two may be
+# empty. Every ticket also gets a ready-check route (a ready description) with its component.
+set_todos() {
+  local spec key prio comp issues="[]"
+  for spec in "$@"; do
+    IFS='|' read -r key prio comp <<<"$spec"
+    issues="$(jq -c --arg k "$key" --arg p "$prio" --arg c "$comp" \
+      '. + [{key: $k, fields: {priority: (if $p == "" then null else {name: $p} end),
+        components: (if $c == "" then [] else [{name: $c}] end)}}]' <<<"$issues")"
+    route "50-ready-$key" "GET */rest/api/2/issue/$key\\?fields=description,components" \
+      "200|$(jq -cn --arg d "$READY_DESC" --arg c "$comp" \
+        '{fields: {description: $d, components: (if $c == "" then [] else [{name: $c}] end)}}')"
+  done
+  route "50-search-todo" 'GET *status%20%3D%20%22Todo%22*' \
+    "200|$(jq -cn --argjson i "$issues" '{issues: $i, isLast: true}')"
+}
 
-# Runs board-pick-next with a fixed date, storing stdout in OUT and the exit code in CODE.
+# Resets the stub state and loads the fake Jira board; every ticket is ready unless a test says otherwise.
+reset_board() {
+  rm -f "$STUB_DIR"/gh-* "$STUB_DIR/calls.log" "$STUB_DIR"/curl-argv "$STUB_DIR"/curl-calls "$STUB_DIR"/curl-body
+  rm -rf "$STUB_DIR/curl-routes"
+  : >"$STUB_DIR/curl-responses"
+  echo '{"visibility":"PRIVATE"}' >"$STUB_DIR/gh-repo-view"
+  route 50-transitions-get 'GET */transitions' \
+    '200|{"transitions":[{"id":"41","name":"Park","to":{"name":"HITL"}}]}'
+  route 50-transitions-post 'POST */transitions' '204|'
+  route 50-label 'PUT */rest/api/2/issue/*' '204|'
+  route 50-comment 'POST */comment' '201|{}'
+  set_todos "BM-10|Low|gusdecool/x" "BM-11|High|gusdecool/x" "BM-12|Highest|gusdecool/x" \
+    "BM-13|Medium|acme/y" "BM-14||gusdecool/x"
+}
+
+# Makes a ticket unready by giving it an empty description (and a valid component).
+make_unready() {
+  route "00-ready-$1" "GET */rest/api/2/issue/$1\\?fields=description,components" \
+    '200|{"fields":{"description":"","components":[{"name":"gusdecool/x"}]}}'
+}
+
+# Prints the mutating Jira steps taken on a ticket, in order, as "move label comment".
+mutations() {
+  awk -v k="$1" '$1 != "GET" && $2 ~ ("/issue/" k "(/|$)") {
+    w = ($2 ~ /transitions$/) ? "move" : ($2 ~ /comment$/) ? "comment" : "label"
+    printf "%s%s", (n++ ? " " : ""), w } END { print "" }' "$STUB_DIR/curl-calls"
+}
+# Counts every mutating Jira call (POST or PUT) of the last run.
+mutation_count() { grep -c -E '^(POST|PUT) ' "$STUB_DIR/curl-calls" || true; }
+# Counts the Jira calls of the last run that mention the given text.
+jira_mentions() { grep -c -F -- "$1" "$STUB_DIR/curl-calls" || true; }
+# Prints the body of the last POST to a ticket's comment endpoint.
+comment_of() { grep "^POST .*/issue/$1/comment " "$STUB_DIR/curl-calls" | tail -n 1 | cut -d' ' -f3-; }
+
+# Runs board-pick-next, storing stdout in OUT, stderr in ERR and the exit code in CODE.
 run_pick() {
-  OUT="$(TODAY=2026-11-06 bash "$PICK" 2>/dev/null)"
+  rm -f "$STUB_DIR/curl-calls"
+  OUT="$(bash "$PICK" "$@" 2>"$STUB_DIR/pick-err")"
   CODE=$?
+  ERR="$(cat "$STUB_DIR/pick-err")"
 }
 
 echo "Pick next"
 reset_board
 run_pick
-assert_eq "High priority in the current iteration wins" "12" "$(jq -r .number <<<"$OUT")"
-assert_eq "pick prints repo, url and item id" \
-  '{"repo":"gusdecool/x","number":12,"url":"https://github.com/gusdecool/x/issues/12","itemId":"I12"}' \
-  "$(jq -c . <<<"$OUT")"
+assert_eq "Highest priority wins" "BM-12" "$(jq -r .key <<<"$OUT")"
+assert_eq "pick prints repo, key and browse url" \
+  '{"repo":"gusdecool/x","key":"BM-12","url":"https://x.atlassian.net/browse/BM-12"}' "$(jq -c . <<<"$OUT")"
 assert_eq "pick exits 0" "0" "$CODE"
-assert_eq "disallowed owner is never checked" "0" "$(grep -c 'acme/y' "$STUB_DIR/calls.log" || true)"
+assert_eq "pick lists the Todo tickets of the project" "1" \
+  "$(grep -c 'search/jql?jql=project%20%3D%20BM%20AND%20status%20%3D%20%22Todo%22&fields=' "$STUB_DIR/curl-calls")"
+assert_eq "a foreign-owner ticket is never checked" "00" \
+  "$(grep -c 'acme/y' "$STUB_DIR/calls.log" || true)$(jira_mentions BM-13)"
+assert_eq "a ready pick changes nothing" "0" "$(mutation_count)"
+
+# Picks until the list is empty and prints the keys in pick order; ready tickets are removed one by one.
+pick_order() {
+  local specs=("$@") remaining order="" key spec
+  while [ "${#specs[@]}" -gt 0 ]; do
+    set_todos "${specs[@]}"
+    run_pick
+    [ "$CODE" -eq 0 ] || break
+    key="$(jq -r .key <<<"$OUT")"
+    order="$order $key"
+    remaining=()
+    for spec in "${specs[@]}"; do
+      if [ "${spec%%|*}" != "$key" ]; then remaining+=("$spec"); fi
+    done
+    specs=("${remaining[@]+"${remaining[@]}"}")
+  done
+  printf '%s' "${order# }"
+}
+reset_board
+assert_eq "priority order is Highest, High, Medium, Low, Lowest, none" "BM-6 BM-5 BM-4 BM-3 BM-2 BM-1" \
+  "$(pick_order "BM-1||gusdecool/x" "BM-2|Lowest|gusdecool/x" "BM-3|Low|gusdecool/x" "BM-4|Medium|gusdecool/x" \
+    "BM-5|High|gusdecool/x" "BM-6|Highest|gusdecool/x")"
+reset_board
+set_todos "BM-14||gusdecool/x"
+run_pick
+assert_eq "a ticket with no priority is still picked" "BM-14" "$(jq -r .key <<<"$OUT")"
+set_todos "BM-14||gusdecool/x" "BM-30|Low|gusdecool/x"
+run_pick
+assert_eq "a ticket with a priority beats one with none" "BM-30" "$(jq -r .key <<<"$OUT")"
+set_todos "BM-10|High|gusdecool/x" "BM-9|High|gusdecool/x"
+run_pick
+assert_eq "equal priority: BM-9 comes before BM-10 (numeric key order)" "BM-9" "$(jq -r .key <<<"$OUT")"
+set_todos "BM-100|Medium|gusdecool/x" "BM-20|Medium|gusdecool/x"
+run_pick
+assert_eq "equal priority: the lower key number wins, not the text order" "BM-20" "$(jq -r .key <<<"$OUT")"
 
 reset_board
-jq 'del(.items[2])' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
+make_unready BM-12
 run_pick
-assert_eq "High in an older iteration beats a lower priority" "11" "$(jq -r .number <<<"$OUT")"
+assert_eq "an unready ticket is skipped for the next one" "BM-11" "$(jq -r .key <<<"$OUT")"
+assert_eq "an unready ticket gets a comment naming the gap" "1" \
+  "$(comment_of BM-12 | grep -c -F 'Missing: Goal, Acceptance criteria. Moved to HITL.')"
+assert_eq "an unready ticket gets the HITL label" "1" \
+  "$(grep -c '^PUT https://x.atlassian.net/rest/api/2/issue/BM-12 {"update":{"labels":\[{"add":"HITL"}\]}}$' \
+    "$STUB_DIR/curl-calls")"
+assert_eq "an unready ticket moves to HITL" "1" \
+  "$(grep -c '^POST .*/issue/BM-12/transitions {"transition":{"id":"41"}}$' "$STUB_DIR/curl-calls")"
+assert_eq "parking moves, then labels, then comments" "move label comment" "$(mutations BM-12)"
 
 reset_board
-jq '.items |= map(select(.id == "I10" or .id == "I14"))' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
+set_todos "BM-13|Medium|acme/y"
 run_pick
-assert_eq "a card with a Priority beats one with none" "10" "$(jq -r .number <<<"$OUT")"
-jq '.items |= map(select(.id == "I14"))' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
-run_pick
-assert_eq "a card with no Priority is still picked" "14" "$(jq -r .number <<<"$OUT")"
+assert_eq "only a foreign-owner ticket: no qualifying ticket exits 1" "1" "$CODE"
+assert_eq "a foreign-owner ticket is ignored untouched" "00" "$(mutation_count)$(jira_mentions BM-13)"
 
 reset_board
-make_unready 12
+set_todos "BM-20|Highest|" "BM-21|Low|gusdecool/x"
 run_pick
-assert_eq "an unready card is skipped for the next one" "11" "$(jq -r .number <<<"$OUT")"
-assert_eq "an unready card gets a comment naming the gap" "1" \
-  "$(grep -c '^issue comment https://github.com/gusdecool/x/issues/12 --body .*Missing: Goal, Acceptance criteria' \
-    "$STUB_DIR/calls.log")"
-assert_eq "an unready card gets the HITL label" "1" \
-  "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/12 --add-label HITL' "$STUB_DIR/calls.log")"
-assert_eq "an unready card moves to HITL" "1" \
-  "$(grep -c '^project item-edit .*--id I12 .*--single-select-option-id o-hitl' "$STUB_DIR/calls.log")"
-assert_eq "parking moves, then labels, then comments" "project item-edit issue edit issue comment" \
-  "$(grep -E '^(issue comment|issue edit|project item-edit) .*(I12|issues/12)' "$STUB_DIR/calls.log" \
-    | awk '{printf "%s%s %s", (NR > 1 ? " " : ""), $1, $2}')"
+assert_eq "an unknown-repo ticket is parked and the next one is picked" "BM-21" "$(jq -r .key <<<"$OUT")"
+assert_eq "an unknown-repo ticket is parked with Component missing" "1" \
+  "$(comment_of BM-20 | grep -c 'Missing: Component. Moved to HITL.')"
+assert_eq "an unknown-repo ticket parks in order" "move label comment" "$(mutations BM-20)"
+assert_eq "an unknown-repo ticket is not looked up for visibility (only BM-21 is)" "1" \
+  "$(grep -c 'repo view' "$STUB_DIR/calls.log" || true)"
+set_todos "BM-22|High|bungamata"
+run_pick
+assert_eq "a component without an owner counts as unknown and is parked" "move label comment" "$(mutations BM-22)"
 
 reset_board
-jq '.items |= map(select(.id == "I13"))' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
+make_unready BM-12
+route 00-comment-fail 'POST */comment' '500|{}'
 run_pick
-assert_eq "no qualifying card exits 1" "1" "$CODE"
+assert_eq "a failing comment while parking exits 2" "2" "$CODE"
+assert_eq "a failing park prints cannot park" "1" "$(grep -c 'cannot park BM-12' <<<"$ERR")"
 
 reset_board
-jq '.items[2].iteration = "S3" | .items[1].iteration = {startDate: "2026-11-02"}' "$FIX/items.json" \
-  >"$STUB_DIR/gh-project-item-list"
-run_pick
-assert_eq "string or duration-less iteration does not crash" "0" "$CODE"
-assert_eq "malformed iterations sort as not current, by number" "11" "$(jq -r .number <<<"$OUT")"
-
-reset_board
-make_unready 12
-touch "$STUB_DIR/gh-fail-issue-comment"
-run_pick
-assert_eq "a failing gh while parking exits 2" "2" "$CODE"
-
-reset_board
-make_unready 12
-touch "$STUB_DIR/gh-fail-project-item-edit"
+make_unready BM-12
+route 00-move-fail 'POST */transitions' '400|{"errorMessages":["Transition is not valid"]}'
 run_pick
 assert_eq "a failed move exits 2" "2" "$CODE"
-assert_eq "a failed move posts no comment" "0" \
-  "$(grep -c '^issue comment .*issues/12' "$STUB_DIR/calls.log" || true)"
+assert_eq "a failed move posts no comment and no label" "move" "$(mutations BM-12)"
+assert_eq "a failed move never repeats a comment" "0" "$(jira_mentions BM-12/comment)"
+
+reset_board
+make_unready BM-12
+route 00-label-fail 'PUT */rest/api/2/issue/*' '403|{"errorMessages":["no"]}'
+run_pick
+assert_eq "a failed label exits 2" "2" "$CODE"
+assert_eq "a failed label posts no comment" "move label" "$(mutations BM-12)"
+
+reset_board
+route 00-search-fail 'GET *search/jql*' '401|{}'
+run_pick
+assert_eq "a Jira error while listing exits 2" "2" "$CODE"
+reset_board
+route 00-ready-BM-12 'GET */rest/api/2/issue/BM-12\?fields=description,components' '500|{}'
+run_pick
+assert_eq "an unreadable ticket is skipped" "BM-11" "$(jq -r .key <<<"$OUT")"
+assert_eq "an unreadable ticket is named on stderr" "1" "$(grep -c 'skipping BM-12, cannot read it' <<<"$ERR")"
+assert_eq "an unreadable ticket is left alone" "" "$(mutations BM-12)"
 
 echo "Set status"
 TRANSITIONS='{"transitions":[{"id":"11","name":"Start","to":{"name":"In progress"}},'
@@ -537,13 +635,11 @@ assert_eq "an unreadable worker exits 2" "2" "$CODE"
 
 echo "Pick next --dry-run"
 reset_board
-make_unready 12
-OUT="$(TODAY=2026-11-06 bash "$PICK" --dry-run 2>/dev/null)"
-CODE=$?
-assert_eq "dry-run still picks the next ready card" "11" "$(jq -r .number <<<"$OUT")"
+make_unready BM-12
+run_pick --dry-run
+assert_eq "dry-run still picks the next ready ticket" "BM-11" "$(jq -r .key <<<"$OUT")"
 assert_eq "dry-run exits 0" "0" "$CODE"
-assert_eq "dry-run never comments, labels or moves" "0" \
-  "$(grep -c -E '^(issue comment|issue edit|project item-edit)' "$STUB_DIR/calls.log" || true)"
+assert_eq "dry-run never comments, labels or moves" "0" "$(mutation_count)"
 
 echo "Draft check"
 DRAFT="$(mktemp)"
@@ -566,24 +662,20 @@ reset_board
 echo '{"visibility":"PUBLIC"}' >"$STUB_DIR/gh-repo-view"
 run_pick
 assert_eq "all public: nothing is picked" "1" "$CODE"
-assert_eq "a public repo's card is commented" "1" \
-  "$(grep -c '^issue comment https://github.com/gusdecool/x/issues/12 --body .*visibility is blocked' \
-    "$STUB_DIR/calls.log")"
-assert_eq "a public repo's card gets HITL" "1" \
-  "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/12 --add-label HITL' "$STUB_DIR/calls.log")"
-assert_eq "a public repo's card moves to HITL" "1" \
-  "$(grep -c '^project item-edit .*--id I12 .*--single-select-option-id o-hitl' "$STUB_DIR/calls.log")"
+assert_eq "a public repo's ticket is commented" "1" \
+  "$(comment_of BM-12 | grep -c -F "Ignored by the board worker: this repo's visibility is blocked")"
+assert_eq "a public repo's ticket gets HITL and moves, in order" "move label comment" "$(mutations BM-12)"
+assert_eq "a public repo's ticket gets the HITL label" "1" \
+  "$(grep -c '^PUT .*/issue/BM-12 {"update":{"labels":\[{"add":"HITL"}\]}}$' "$STUB_DIR/curl-calls")"
 reset_board
 echo '{"visibility":"PUBLIC"}' >"$STUB_DIR/gh-repo-view"
-OUT="$(TODAY=2026-11-06 bash "$PICK" --dry-run 2>/dev/null)"
-assert_eq "dry-run on a public repo changes nothing" "0" \
-  "$(grep -c -E '^(issue comment|issue edit|project item-edit)' "$STUB_DIR/calls.log" || true)"
+run_pick --dry-run
+assert_eq "dry-run on a public repo changes nothing" "0" "$(mutation_count)"
 reset_board
 touch "$STUB_DIR/gh-fail-repo-view"
 run_pick
-assert_eq "an unreadable visibility skips the card, exit 1" "1" "$CODE"
-assert_eq "an unreadable visibility changes nothing" "0" \
-  "$(grep -c -E '^(issue comment|issue edit|project item-edit)' "$STUB_DIR/calls.log" || true)"
+assert_eq "an unreadable visibility skips the ticket, exit 1" "1" "$CODE"
+assert_eq "an unreadable visibility changes nothing" "0" "$(mutation_count)"
 rm -f "$STUB_DIR/gh-fail-repo-view"
 
 echo "Diff check"
@@ -754,118 +846,149 @@ exit 1
 STUB
 chmod +x "$STUB_DIR/pp-ok" "$STUB_DIR/pp-fail"
 
-# Loads the board with In progress cards 20 and 21 on top of the Todo fixtures.
+# Replaces the In progress tickets of the fake Jira board. Each argument is "KEY|updated|component"; updated and
+# component may be empty (no updated field, no component).
+set_progress() {
+  local spec key upd comp issues="[]"
+  for spec in "$@"; do
+    IFS='|' read -r key upd comp <<<"$spec"
+    issues="$(jq -c --arg k "$key" --arg u "$upd" --arg c "$comp" \
+      '. + [{key: $k, fields: ({components: (if $c == "" then [] else [{name: $c}] end)}
+        + (if $u == "" then {} else {updated: $u} end))}]' <<<"$issues")"
+  done
+  route "50-search-progress" 'GET *%22In%20progress%22*' \
+    "200|$(jq -cn --argjson i "$issues" '{issues: $i, isLast: true}')"
+}
+
+# Loads the board with In progress tickets BM-20 (30 minutes quiet, +0800 clock) and BM-21 (1 hour quiet) on top of
+# the Todo fixtures.
 precheck_board() {
   reset_board
-  jq '.items += [
-    {"id":"I20","status":"In progress","content":{"type":"Issue","number":20,"repository":"gusdecool/x",
-      "url":"https://github.com/gusdecool/x/issues/20"}},
-    {"id":"I21","status":"In progress","content":{"type":"Issue","number":21,"repository":"gusdecool/x",
-      "url":"https://github.com/gusdecool/x/issues/21"}}]' "$FIX/items.json" >"$STUB_DIR/gh-project-item-list"
-  echo '{"updatedAt":"2026-11-06T11:30:00Z"}' >"$STUB_DIR/gh-issue-view-20"
-  echo '{"updatedAt":"2026-11-06T11:00:00Z"}' >"$STUB_DIR/gh-issue-view-21"
+  set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x" "BM-21|2026-11-06T11:00:00.000+0000|gusdecool/x"
   echo '[]' >"$STUB_DIR/gh-pr-list"
 }
 # Runs board-precheck with a fixed clock and a provider stub, storing the exit code in CODE and stderr in ERR.
 run_precheck() {
-  ERR="$(TODAY=2026-11-06 NOW_EPOCH="$NOW_EPOCH" PICK_PROVIDER="$STUB_DIR/${1:-pp-ok}" \
-    bash "$PRECHECK" 2>&1 >/dev/null)"
+  rm -f "$STUB_DIR/curl-calls"
+  ERR="$(NOW_EPOCH="$NOW_EPOCH" PICK_PROVIDER="$STUB_DIR/${1:-pp-ok}" bash "$PRECHECK" 2>&1 >/dev/null)"
   CODE=$?
 }
 
 precheck_board
 run_precheck
-assert_eq "two active In progress cards exit 1" "1" "$CODE"
+assert_eq "two active In progress tickets exit 1" "1" "$CODE"
 assert_eq "the failed condition is named on one line" "1" "$(wc -l <<<"$ERR" | tr -d ' ')"
 assert_eq "the line names the In progress limit" "1" "$(grep -c 'In progress' <<<"$ERR")"
-assert_eq "active cards are not reaped" "0" "$(grep -c -E '^(issue comment|issue edit)' "$STUB_DIR/calls.log" || true)"
+assert_eq "active tickets are not reaped" "0" "$(mutation_count)"
+assert_eq "the In progress search uses the project and the status" "1" \
+  "$(grep -c 'jql=project%20%3D%20BM%20AND%20status%20%3D%20%22In%20progress%22&fields=summary%2Ccomponents%2Cupdated' \
+    "$STUB_DIR/curl-calls")"
 
 precheck_board
-echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
+set_progress "BM-20|2026-11-06T17:00:00.123+0800|gusdecool/x" "BM-21|2026-11-06T11:00:00.000+0000|gusdecool/x"
 echo '[{"updatedAt":"2026-11-06T08:00:00Z","url":"https://github.com/gusdecool/x/pull/99"}]' >"$STUB_DIR/gh-pr-list"
 run_precheck
-assert_eq "a 3-hour-stale card is reaped and frees a slot" "0" "$CODE"
-assert_eq "the stale card gets a comment with the 2-hour rule, last activity and last PR" "1" \
-  "$(grep -c -E 'issues/20 --body .*2026-11-06T09:00:00Z.*2 hours.*pull/99' "$STUB_DIR/calls.log")"
-assert_eq "the stale card gets the HITL label" "1" \
-  "$(grep -c '^issue edit https://github.com/gusdecool/x/issues/20 --add-label HITL' "$STUB_DIR/calls.log")"
-assert_eq "the stale card moves to HITL" "1" \
-  "$(grep -c '^project item-edit .*--id I20 .*--single-select-option-id o-hitl' "$STUB_DIR/calls.log")"
-assert_eq "the active card is left alone" "0" \
-  "$(grep -c -E '^issue (comment|edit) .*issues/21' "$STUB_DIR/calls.log" || true)"
-assert_eq "the precheck never parks Todo cards" "0" \
-  "$(grep -c -E '^issue (comment|edit) .*issues/1[0-4]' "$STUB_DIR/calls.log" || true)"
+assert_eq "a 3-hour-stale ticket is reaped and frees a slot" "0" "$CODE"
+assert_eq "the stale ticket gets a comment with the 2-hour rule, last activity and last PR" "1" \
+  "$(comment_of BM-20 \
+    | grep -c -E 'since 2026-11-06T09:00:00Z.*2 hours.*seen: https://github.com/gusdecool/x/pull/99\.')"
+assert_eq "the stale ticket gets the HITL label" "1" \
+  "$(grep -c '^PUT .*/issue/BM-20 {"update":{"labels":\[{"add":"HITL"}\]}}$' "$STUB_DIR/curl-calls")"
+assert_eq "the stale ticket moves, labels and comments in that order" "move label comment" "$(mutations BM-20)"
+assert_eq "the fresh ticket is left alone" "" "$(mutations BM-21)"
+assert_eq "the precheck never parks Todo tickets" "" "$(mutations BM-1[0-4])"
+assert_eq "the PR search is by ticket key, newest first, 100 results" "1" \
+  "$(grep -c -E '^pr list --repo gusdecool/x --state all --limit 100 --search BM-20 sort:updated-desc ' \
+    "$STUB_DIR/calls.log")"
 
 precheck_board
-echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
+set_progress "BM-20|2026-11-06T17:00:00.000+0800|gusdecool/x" "BM-21|2026-11-06T11:00:00.000+0000|gusdecool/x"
 echo '[{"updatedAt":"2026-11-06T11:45:00Z","url":"https://github.com/gusdecool/x/pull/98"}]' >"$STUB_DIR/gh-pr-list"
 run_precheck
-assert_eq "recent PR activity keeps a card with a stale issue" "1" "$CODE"
-assert_eq "a card with recent PR activity is not reaped" "0" "$(grep -c '^issue comment' "$STUB_DIR/calls.log" || true)"
+assert_eq "recent PR activity keeps a ticket with a stale Jira update" "1" "$CODE"
+assert_eq "a ticket with recent PR activity is not reaped" "0" "$(mutation_count)"
 
 precheck_board
-jq '.items |= map(select(.status != "Todo"))' "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
-jq '.items |= map(select(.id != "I21"))' "$STUB_DIR/items.tmp" >"$STUB_DIR/gh-project-item-list"
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x" "BM-21|2026-11-06T04:00:00.000-0500|gusdecool/x"
 run_precheck
-assert_eq "no Todo card exits 1" "1" "$CODE"
-assert_eq "no Todo card is named" "1" "$(grep -c 'Todo' <<<"$ERR")"
+assert_eq "a -0500 time is converted: 04:00-0500 is 09:00Z, stale" "0" "$CODE"
+assert_eq "the -0500 ticket is reaped with its UTC time" "1" \
+  "$(comment_of BM-21 | grep -c -F 'No activity since 2026-11-06T09:00:00Z')"
+assert_eq "a +0800 time is converted: 19:30+0800 is 11:30Z, fresh" "" "$(mutations BM-20)"
+precheck_board
+set_progress "BM-20|2026-11-06T17:00:00.123+0800|gusdecool/x" "BM-21|2026-11-06T06:30:00.000-0500|gusdecool/x"
+run_precheck
+assert_eq "a +0800 time is converted: 17:00+0800 is 09:00Z, stale" "move label comment" "$(mutations BM-20)"
+assert_eq "a -0500 time is converted: 06:30-0500 is 11:30Z, fresh" "" "$(mutations BM-21)"
+assert_eq "the offset conversion lets the precheck pass" "0" "$CODE"
+precheck_board
+set_progress "BM-20|2026-11-06T11:59:00.5+0000|gusdecool/x" "BM-21|2026-11-06T14:00:00Z|gusdecool/x"
+run_precheck
+assert_eq "an offset +0000 and a Z time are both read" "1" "$CODE"
 
 precheck_board
-jq '.items |= map(select(.id != "I21"))' "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
-cp "$STUB_DIR/items.tmp" "$STUB_DIR/gh-project-item-list"
+set_todos
+run_precheck
+assert_eq "no Todo ticket and two active tickets exit 1" "1" "$CODE"
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x"
+run_precheck
+assert_eq "no Todo ticket exits 1" "1" "$CODE"
+assert_eq "no Todo ticket is named" "1" "$(grep -c 'Todo' <<<"$ERR")"
+
+precheck_board
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x"
 run_precheck pp-fail
 assert_eq "provider failure exits 1" "1" "$CODE"
 assert_eq "provider failure is named" "1" "$(grep -c 'provider' <<<"$ERR")"
 run_precheck pp-ok
-assert_eq "one In progress card, a Todo card and a provider exit 0" "0" "$CODE"
+assert_eq "one In progress ticket, a Todo ticket and a provider exit 0" "0" "$CODE"
 
 precheck_board
-echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
-echo '{"updatedAt":"2026-11-06T08:00:00Z"}' >"$STUB_DIR/gh-issue-view-21"
+set_progress "BM-20|2026-11-06T17:00:00.000+0800|gusdecool/x" "BM-21|2026-11-06T16:00:00.000+0800|gusdecool/x"
 run_precheck
-assert_eq "both stale cards are reaped, so the precheck passes" "0" "$CODE"
-assert_eq "the status move happens before the comment" "1" \
-  "$([ "$(grep -n '^project item-edit .*--id I20' "$STUB_DIR/calls.log" | head -1 | cut -d: -f1)" -lt \
-    "$(grep -n '^issue comment .*issues/20' "$STUB_DIR/calls.log" | head -1 | cut -d: -f1)" ] && echo 1 || echo 0)"
-assert_eq "the PR lookup asks for 100 results, newest first" "1" \
-  "$(grep -c -E '^pr list .*--limit 100 --search #20 sort:updated-desc' "$STUB_DIR/calls.log")"
+assert_eq "both stale tickets are reaped, so the precheck passes" "0" "$CODE"
+assert_eq "the status move happens before the comment" "move label comment" "$(mutations BM-20)"
+assert_eq "the second stale ticket is reaped too" "move label comment" "$(mutations BM-21)"
 
 precheck_board
-echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
-echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-21"
-touch "$STUB_DIR/gh-fail-issue-comment"
+set_progress "BM-20|2026-11-06T17:00:00.000+0800|gusdecool/x" "BM-21|2026-11-06T17:00:00.000+0800|gusdecool/x"
+route 00-comment-fail 'POST */comment' '500|{}'
 run_precheck
 assert_eq "a failing reap exits 2" "2" "$CODE"
-assert_eq "a failing reap still tries the next card" "1" \
-  "$(grep -c '^project item-edit .*--id I21' "$STUB_DIR/calls.log")"
-assert_eq "a failing reap names the failed cards" "2" \
-  "$(grep -o 'issues/2[01]' <<<"$ERR" | sort -u | wc -l | tr -d ' ')"
+assert_eq "a failing reap still tries the next ticket" "move label comment" "$(mutations BM-21)"
+assert_eq "a failing reap names the failed tickets" "2" "$(grep -o 'BM-2[01]' <<<"$ERR" | sort -u | wc -l | tr -d ' ')"
 
 precheck_board
-echo '{"updatedAt":"2026-11-06T09:00:00Z"}' >"$STUB_DIR/gh-issue-view-20"
-touch "$STUB_DIR/gh-fail-issue-view"
+set_progress "BM-20|2026-11-06T17:00:00.000+0800|gusdecool/x" "BM-21|2026-11-06T11:00:00.000+0000|gusdecool/x"
+route 00-move-fail 'POST */transitions' '400|{"errorMessages":["no"]}'
+run_precheck
+assert_eq "a failed move exits 2 and the ticket is named" "2 1" \
+  "$CODE $(grep -c 'could not reap: BM-20' <<<"$ERR")"
+assert_eq "a failed move adds no label and no comment" "move" "$(mutations BM-20)"
+
+precheck_board
+set_progress "BM-20|2026-11-06T17:00:00.000+0800|gusdecool/x" "BM-21|2026-11-06T17:00:00.000+0800|gusdecool/x"
+touch "$STUB_DIR/gh-fail-pr-list"
 run_precheck
 assert_eq "unreadable activity counts as active" "1" "$CODE"
-assert_eq "unreadable activity never reaps" "0" "$(grep -c -E '^(issue (comment|edit)|project item-edit)' \
-  "$STUB_DIR/calls.log" || true)"
+assert_eq "unreadable activity never reaps" "0" "$(mutation_count)"
 
 precheck_board
-echo '{}' >"$STUB_DIR/gh-issue-view-20"
-echo '{}' >"$STUB_DIR/gh-issue-view-21"
+set_progress "BM-20||gusdecool/x" "BM-21||gusdecool/x"
 run_precheck
-assert_eq "a null updatedAt counts as active and is not reaped" "1" "$CODE"
-assert_eq "a null updatedAt never reaps" "0" "$(grep -c -E '^(issue (comment|edit)|project item-edit)' \
-  "$STUB_DIR/calls.log" || true)"
+assert_eq "a missing updated time counts as active and is not reaped" "1" "$CODE"
+assert_eq "a missing updated time never reaps" "0" "$(mutation_count)"
 
 precheck_board
-jq '.items |= map(select(.id != "I21")) | .items += [{"id":"I30","status":"In progress",
-  "content":{"type":"Issue","number":30,"repository":"acme/y","url":"https://github.com/acme/y/issues/30"}}]' \
-  "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
-cp "$STUB_DIR/items.tmp" "$STUB_DIR/gh-project-item-list"
-echo '{"updatedAt":"2026-11-06T01:00:00Z"}' >"$STUB_DIR/gh-issue-view-30"
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x" "BM-30|2026-11-06T01:00:00.000+0000|acme/y"
 run_precheck
-assert_eq "a foreign-owner In progress card is counted" "1" "$CODE"
-assert_eq "a foreign-owner In progress card is never reaped" "0" "$(grep -c 'acme/y' "$STUB_DIR/calls.log" || true)"
+assert_eq "a foreign-owner In progress ticket is counted" "1" "$CODE"
+assert_eq "a foreign-owner In progress ticket is never reaped" "00" \
+  "$(grep -c 'acme/y' "$STUB_DIR/calls.log" || true)$(jira_mentions BM-30/)"
+set_progress "BM-31|2026-11-06T01:00:00.000+0000|" "BM-20|2026-11-06T19:30:00.000+0800|gusdecool/x"
+run_precheck
+assert_eq "an unknown-repo In progress ticket is counted" "1" "$CODE"
+assert_eq "an unknown-repo In progress ticket is never reaped" "00" "$(mutation_count)$(jira_mentions BM-31/)"
 
 # Asserts the last precheck wrote exactly one stderr line. Arg: label.
 assert_one_line() { assert_eq "$1 prints exactly one stderr line" "1" "$(printf '%s\n' "$ERR" | grep -c .)"; }
@@ -873,13 +996,12 @@ precheck_board
 run_precheck
 assert_one_line "limit reached"
 precheck_board
-jq '.items |= map(select(.status != "Todo" and .id != "I21"))' "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
-cp "$STUB_DIR/items.tmp" "$STUB_DIR/gh-project-item-list"
+set_todos
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x"
 run_precheck
-assert_one_line "no Todo card"
+assert_one_line "no Todo ticket"
 precheck_board
-jq '.items |= map(select(.id != "I21"))' "$STUB_DIR/gh-project-item-list" >"$STUB_DIR/items.tmp"
-cp "$STUB_DIR/items.tmp" "$STUB_DIR/gh-project-item-list"
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x"
 run_precheck pp-fail
 assert_one_line "no provider"
 cat >"$STUB_DIR/pp-broken" <<'STUB'
@@ -897,9 +1019,15 @@ run_precheck pp-broken
 LOGGED="$(cat "$BOARD_PRECHECK_LOG")"
 assert_eq "the log names the failing sub-script" "1" "$(grep -c 'pick-provider exited 2: boom' <<<"$LOGGED")"
 assert_eq "the log records the final exit" "1" "$(grep -c 'exit 2: cannot read the provider' <<<"$LOGGED")"
-touch "$STUB_DIR/gh-fail-project-item-list"
+route 00-search-fail 'GET *%22In%20progress%22*' '500|{}'
 run_precheck
-assert_eq "an unreadable board exits 2" "2" "$CODE"
+assert_eq "a Jira error while listing exits 2" "2" "$CODE"
+assert_one_line "a Jira error"
+precheck_board
+route 00-search-fail 'GET *%22Todo%22*' '500|{}'
+set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x"
+run_precheck
+assert_eq "an unreadable Todo list exits 2" "2" "$CODE"
 
 # board-cleanup: only a clean worktree with a merged PR is removed.
 CLEANUP="$REPO/skills/board-worker/scripts/board-cleanup"
