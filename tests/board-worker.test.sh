@@ -35,9 +35,6 @@ assert_eq() {
   if [ "$2" != "$3" ]; then echo "FAIL: $1 (expected '$2', got '$3')"; FAILS=$((FAILS + 1)); else echo "ok: $1"; fi
 }
 
-# Sets the issue body that the gh stub returns for gh issue view.
-set_body() { jq -n --arg body "$1" '{body: $body}' >"$STUB_DIR/gh-output"; }
-
 # Clears the curl stub logs and queues the given responses, one "<code>|<json>" per argument.
 reset_curl() {
   rm -f "$STUB_DIR"/curl-argv "$STUB_DIR"/curl-stdin "$STUB_DIR"/curl-body "$STUB_DIR"/curl-fail "$STUB_DIR"/curl-calls
@@ -483,7 +480,7 @@ assert_eq "set-status prints one line for an unknown status" "board-set-status: 
   "$(cat "$STUB_DIR/err")"
 assert_eq "set-status never calls curl on an unknown status" "no" \
   "$([ -e "$STUB_DIR/curl-argv" ] && echo yes || echo no)"
-bash "$SETSTATUS" BM-1 done 2>/dev/null
+bash "$SETSTATUS" BM-1 "done" 2>/dev/null
 assert_eq "set-status status match is case-sensitive" "2" "$?"
 bash "$SETSTATUS" not-a-key Done 2>/dev/null
 assert_eq "set-status rejects a bad ticket key with 2" "2" "$?"

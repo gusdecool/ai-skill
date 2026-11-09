@@ -81,8 +81,10 @@ assert_eq "status reads the ticket" "GET https://x.atlassian.net/rest/api/2/issu
 
 echo "comment"
 reset_curl '201|{"id":"1"}'
+# shellcheck disable=SC2016 # the comment is a literal $(...) on purpose: it must be sent as data
 run comment BM-5 "Board worker" 'started $(touch '"$STUB_DIR"'/pwned) "q"'
 assert_eq "comment exits 0" "0" "$CODE"
+# shellcheck disable=SC2016 # the comment is a literal $(...) on purpose: it must be sent as data
 assert_eq "comment joins the words and sends them as data" \
   'Board worker started $(touch '"$STUB_DIR"'/pwned) "q"' "$(jq -r .body "$STUB_DIR/curl-body")"
 assert_eq "comment posts to the comment resource" "POST https://x.atlassian.net/rest/api/2/issue/BM-5/comment" \
@@ -121,8 +123,10 @@ assert_eq "a URL on another host exits 2 with no call" "2 0" "$CODE $(ncalls)"
 
 echo "create"
 DESC="$STUB_DIR/desc"
+# shellcheck disable=SC2016 # the description is a literal $(...) on purpose: it must be sent as data
 printf 'h2. Goal\nSay "hi" and run $(touch %s/pwned2)\n`id`\n' "$STUB_DIR" >"$DESC"
 reset_curl '201|{"id":"9","key":"BM-9"}'
+# shellcheck disable=SC2016 # the summary is a literal $(...) on purpose: it must be sent as data
 run create --summary 'Add "x" $(id)' --component acme/app --description-file "$DESC" --priority High
 assert_eq "create prints key and url" '{"key":"BM-9","url":"https://x.atlassian.net/browse/BM-9"}' "$OUT"
 assert_eq "create posts to the issue resource" "POST https://x.atlassian.net/rest/api/2/issue" \
@@ -131,6 +135,7 @@ assert_eq "create sends project, component, priority and type, with no status" \
   'BM|acme/app|High|Task|false' \
   "$(jq -r '.fields | "\(.project.key)|\(.components[0].name)|\(.priority.name)|\(.issuetype.name)|\(has("status"))"' \
     "$STUB_DIR/curl-body")"
+# shellcheck disable=SC2016 # the summary is a literal $(...) on purpose: it must be sent as data
 assert_eq "create sends the summary as data" 'Add "x" $(id)' "$(jq -r .fields.summary "$STUB_DIR/curl-body")"
 assert_eq "create sends the description file intact" "$(cat "$DESC")" \
   "$(jq -r .fields.description "$STUB_DIR/curl-body")"

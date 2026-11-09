@@ -138,6 +138,7 @@ ROWS
 
 echo "apply: creation, comment and conversion"
 reset
+# shellcheck disable=SC2016 # the title is a literal $(...) on purpose: it must stay data
 board "$(item 10 $BOARD Todo High Issue 'A $(whoami) "title"' "$BODY" "$EMPTY")" \
   "$(item 11 bungamata/z Backlog Low Issue 'Second' 'plain' "$EMPTY")"
 run --owner bungamata --project 9 --apply
@@ -151,6 +152,7 @@ assert_eq "component of the first card" "gusdecool/x" "$(jq -r '.fields.componen
 assert_eq "component of the second card" "bungamata/z" "$(jq -r '.fields.components[0].name' <<<"$SECOND")"
 assert_eq "priorities are mapped" "High Low" \
   "$(jq -r '.fields.priority.name' <<<"$FIRST") $(jq -r '.fields.priority.name' <<<"$SECOND")"
+# shellcheck disable=SC2016 # the title is a literal $(...) on purpose: it must stay data
 assert_eq "title stays data" 'A $(whoami) "title"' "$(jq -r '.fields.summary' <<<"$FIRST")"
 assert_eq "description starts with the GitHub link" "GitHub: https://github.com/gusdecool/x/issues/10" \
   "$(jq -r '.fields.description' <<<"$FIRST" | sed -n 1p)"
@@ -168,9 +170,11 @@ echo "apply: markdown converter"
 reset
 MD=$'# Title\n## Sub **x**\n###### Six\n####### Seven\n#nospace\nuse `a` and **b**\n```js\n# not **x** `y`'
 MD+=$'\n$(rm -rf /) "q"\n```'
+# shellcheck disable=SC2016 # the text is a literal $(...) on purpose: the converter must not run it
 MD+=$'\n```\nplain\n```\ntext $(echo hi) "quoted" '"'"'single'"'"' `a`'
 board "$(item 10 $BOARD Backlog High Issue 'T' "$MD" "$EMPTY")"
 run --owner bungamata --project 9 --apply
+# shellcheck disable=SC2016 # the text is a literal $(...) on purpose: the converter must not run it
 EXPECT='h1. Title
 h2. Sub *x*
 h6. Six

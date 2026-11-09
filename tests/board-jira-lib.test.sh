@@ -45,6 +45,7 @@ run_lib() {
 
 echo "Jira config"
 write_config "'$TOKEN'"
+# shellcheck disable=SC2016 # the single-quoted code runs in the child shell, where the variables expand
 run_lib 'jira_load_config && printf "%s|%s|%s|%s" "$JIRA_SITE" "$JIRA_EMAIL" "$JIRA_TOKEN" "$JIRA_PROJECT"'
 assert_eq "single, double and no quotes parse; project defaults to BM" "https://x.atlassian.net|a@b.c|$TOKEN|BM" "$OUT"
 write_config "\"$TOKEN\""
@@ -58,6 +59,7 @@ run_lib 'jira_config_value JIRA_TOKEN'
 assert_eq "only one pair of quotes is stripped" "it'\"'\"'s" "$OUT"
 printf "JIRA_SITE='https://x.atlassian.net'\nJIRA_EMAIL='a@b.c'\nJIRA_TOKEN='old'\n" >"$BOARD_JIRA_CONFIG"
 printf "JIRA_TOKEN='new'\nJIRA_PROJECT=ABC\n" >>"$BOARD_JIRA_CONFIG"
+# shellcheck disable=SC2016 # the single-quoted code runs in the child shell, where the variables expand
 run_lib 'jira_load_config && printf "%s|%s" "$JIRA_TOKEN" "$JIRA_PROJECT"'
 assert_eq "last assignment wins and JIRA_PROJECT is read" "new|ABC" "$OUT"
 
