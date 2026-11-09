@@ -1,46 +1,53 @@
 #!/usr/bin/env bash
-# Creates the board-worker config file, asking for each value unless it is given as a flag.
-# Usage: board-setup [--owner <org>] [--project <number>] [--allowed <owner1,owner2>]
-# Writes ${BOARD_WORKER_CONFIG:-$HOME/.config/board-worker/config}. Exits 0 when written, 2 on bad input.
-# Without a terminal and without all three flags it fails instead of waiting for an answer.
+# Creates the board-worker config file with the repo owners the worker may act on, then checks the Jira side.
+# Usage: board-setup [--allowed <owner1,owner2>]
+# Writes ${BOARD_WORKER_CONFIG:-$HOME/.config/board-worker/config} (BOARD_ALLOWED_OWNERS only). Exits 0 when written
+# and Jira answers, 2 on bad input, a missing or invalid Jira config, or a Jira error (the config stays written).
+# Without a terminal and without the flag it fails instead of waiting for an answer. It never writes or prints the
+# Jira token; that file (${BOARD_JIRA_CONFIG:-$HOME/.config/board-worker/jira}) is created by the user.
 set -euo pipefail
 
 file="${BOARD_WORKER_CONFIG:-$HOME/.config/board-worker/config}"
-owner="" project="" allowed=""
+allowed=""
 
 # Prints an error and exits 2.
 die() { echo "board-setup: $*" >&2; exit 2; }
 
 while [ "$#" -gt 0 ]; do
-  [ "$#" -ge 2 ] || die "missing value for $1"
+  [ "$#" -ge 2 ] || die "usage: board-setup [--allowed <owner1,owner2>]"
   case "$1" in
-    --owner) owner="$2" ;;
-    --project) project="$2" ;;
     --allowed) allowed="$2" ;;
-    *) die "usage: board-setup [--owner <org>] [--project <number>] [--allowed <owner1,owner2>]" ;;
+    *) die "usage: board-setup [--allowed <owner1,owner2>]" ;;
   esac
   shift 2
 done
 
 # Asks for a value on the terminal; fails when there is no terminal. Args: prompt text.
 ask() {
-  [ -t 0 ] || die "no terminal: pass --owner, --project and --allowed"
+  [ -t 0 ] || die "no terminal: pass --allowed"
   local answer
   read -r -p "$1 " answer
   printf '%s' "$answer"
 }
 
-[ -n "$owner" ] || owner="$(ask "Owner of the GitHub Project (organization or user):")"
-[ -n "$project" ] || project="$(ask "Project number (the number in the project URL):")"
-[ -n "$allowed" ] || allowed="$(ask "Repo owners the worker may act on and merge in, comma-separated [$owner]:")"
-[ -n "$allowed" ] || allowed="$owner"
+[ -n "$allowed" ] || allowed="$(ask "Repo owners the worker may act on and merge in, comma-separated:")"
 
 mkdir -p "$(dirname "$file")"
-printf 'BOARD_OWNER=%s\nBOARD_PROJECT=%s\nBOARD_ALLOWED_OWNERS=%s\n' "$owner" "$project" "$allowed" >"$file"
+printf 'BOARD_ALLOWED_OWNERS=%s\n' "$allowed" >"$file"
 
 # Re-read the file through the library so a bad value is reported now, not on the first run.
 if ! (BOARD_WORKER_CONFIG="$file" source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh") 2>/dev/null; then
   rm -f "$file"
-  die "invalid value (owner and allowed: letters, digits, '-'; project: digits); nothing written"
+  die "invalid value (allowed owners: letters, digits, '-', comma-separated); nothing written"
 fi
-echo "board-setup: wrote $file"
+
+# Check the Jira side; the config stays written either way.
+source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
+jira_file="${BOARD_JIRA_CONFIG:-$HOME/.config/board-worker/jira}"
+if ! jira_load_config 2>/dev/null; then
+  die "wrote $file; Jira config missing or invalid at $jira_file (needs JIRA_SITE, JIRA_EMAIL, JIRA_TOKEN)"
+fi
+me="$(jira_api GET /rest/api/2/myself)" || die "wrote $file; Jira check failed"
+name="$(jq -r '.displayName // empty' <<<"$me" 2>/dev/null)" || name=""
+[ -n "$name" ] || name="$JIRA_EMAIL"
+echo "board-setup: wrote $file; Jira connected as $name"

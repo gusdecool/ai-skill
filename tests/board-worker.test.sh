@@ -70,21 +70,62 @@ CONF_DIR="$(mktemp -d)"
 BOARD_WORKER_CONFIG="$CONF_DIR/none" bash "$CHECK" BM-1 2>"$CONF_DIR/err"
 assert_eq "missing config exits 2" "2" "$?"
 assert_eq "missing config prints one line naming board-setup" "1" "$(grep -c 'board-setup' "$CONF_DIR/err")"
-printf 'BOARD_OWNER=acme\nBOARD_PROJECT=abc\nBOARD_ALLOWED_OWNERS=acme\n' >"$CONF_DIR/bad"
+printf 'BOARD_ALLOWED_OWNERS=acme,bad owner\n' >"$CONF_DIR/bad"
 BOARD_WORKER_CONFIG="$CONF_DIR/bad" bash "$CHECK" BM-1 2>"$CONF_DIR/err"
-assert_eq "non-numeric project exits 2" "2" "$?"
-printf 'BOARD_OWNER=acme\nBOARD_PROJECT=4\nBOARD_ALLOWED_OWNERS=acme,beta\n' >"$CONF_DIR/acme"
+assert_eq "an invalid allowed owner exits 2" "2" "$?"
+printf 'BOARD_OWNER=acme\n' >"$CONF_DIR/noallowed"
+BOARD_WORKER_CONFIG="$CONF_DIR/noallowed" bash "$CHECK" BM-1 2>"$CONF_DIR/err"
+assert_eq "a config without BOARD_ALLOWED_OWNERS exits 2" "2" "$?"
+printf 'BOARD_ALLOWED_OWNERS=acme,beta\n' >"$CONF_DIR/acme"
 # shellcheck disable=SC1090
 assert_eq "config values drive the allow-list" "0 1" \
   "$(BOARD_WORKER_CONFIG="$CONF_DIR/acme" bash -c \
     'source "$1"; board_owner_allowed beta/x; a=$?; board_owner_allowed bungamata/x; echo "$a $?"' _ "$LIB")"
-BOARD_WORKER_CONFIG="$CONF_DIR/new/config" bash "$SETUP" --owner acme --project 4 --allowed acme,beta >/dev/null
-assert_eq "board-setup writes the config" "$(cat "$CONF_DIR/acme")" "$(cat "$CONF_DIR/new/config")"
-BOARD_WORKER_CONFIG="$CONF_DIR/new2" bash "$SETUP" --owner acme --project x --allowed acme 2>/dev/null
-assert_eq "board-setup rejects a bad project" "2" "$?"
+printf 'BOARD_OWNER=old\nBOARD_PROJECT=9\nBOARD_ALLOWED_OWNERS=acme,beta\n' >"$CONF_DIR/old"
+assert_eq "old BOARD_OWNER and BOARD_PROJECT lines are ignored" "0 1" \
+  "$(BOARD_WORKER_CONFIG="$CONF_DIR/old" bash -c \
+    'source "$1"; board_owner_allowed beta/x; a=$?; board_owner_allowed old/x; echo "$a $?"' _ "$LIB")"
+# Runs board-setup against a fresh Jira answer; sets OUT (stdout), ERR (stderr) and CODE.
+run_setup() {
+  OUT="$(BOARD_WORKER_CONFIG="$1" bash "$SETUP" "${@:2}" 2>"$CONF_DIR/err" </dev/null)"; CODE=$?
+  ERR="$(cat "$CONF_DIR/err")"
+}
+reset_curl '200|{"displayName":"Budi A"}'
+run_setup "$CONF_DIR/new/config" --allowed acme,beta
+assert_eq "board-setup writes only BOARD_ALLOWED_OWNERS" "BOARD_ALLOWED_OWNERS=acme,beta" \
+  "$(cat "$CONF_DIR/new/config")"
+assert_eq "board-setup reports the Jira user and exits 0" \
+  "0 board-setup: wrote $CONF_DIR/new/config; Jira connected as Budi A" "$CODE $OUT"
+assert_eq "board-setup never prints the token" "0" "$(grep -c 'FAKE-TOKEN' <<<"$OUT$ERR")"
+assert_eq "board-setup asks Jira who am I" "GET https://x.atlassian.net/rest/api/2/myself " \
+  "$(cat "$STUB_DIR/curl-calls")"
+run_setup "$CONF_DIR/new1" --owner acme --allowed acme
+assert_eq "board-setup rejects --owner with exit 2" "2" "$CODE"
+assert_eq "board-setup prints a usage line for --owner" "1" "$(grep -c 'usage: board-setup' <<<"$ERR")"
+assert_eq "board-setup writes nothing for --owner" "no" "$([ -e "$CONF_DIR/new1" ] && echo yes || echo no)"
+run_setup "$CONF_DIR/new1" --project 4 --allowed acme
+assert_eq "board-setup rejects --project with exit 2" "2" "$CODE"
+run_setup "$CONF_DIR/new2" --allowed 'acme,bad owner'
+assert_eq "board-setup rejects a bad owner" "2" "$CODE"
 assert_eq "board-setup writes nothing on bad input" "no" "$([ -e "$CONF_DIR/new2" ] && echo yes || echo no)"
-BOARD_WORKER_CONFIG="$CONF_DIR/new3" bash "$SETUP" </dev/null 2>/dev/null
-assert_eq "board-setup without a terminal or flags exits 2" "2" "$?"
+OUT="$(BOARD_WORKER_CONFIG="$CONF_DIR/new3" bash "$SETUP" </dev/null 2>&1)"
+assert_eq "board-setup without a terminal or flag exits 2" "2" "$?"
+OUT="$(BOARD_JIRA_CONFIG="$CONF_DIR/nojira" BOARD_WORKER_CONFIG="$CONF_DIR/new4" bash "$SETUP" --allowed acme 2>&1)"
+assert_eq "board-setup with no Jira config exits 2" "2" "$?"
+assert_eq "board-setup names the missing Jira config" "1" \
+  "$(grep -c 'Jira config missing or invalid at .*nojira' <<<"$OUT")"
+assert_eq "board-setup keeps the config when Jira config is missing" "BOARD_ALLOWED_OWNERS=acme" \
+  "$(cat "$CONF_DIR/new4")"
+printf "JIRA_SITE='http://bad'\nJIRA_EMAIL='a@b.c'\nJIRA_TOKEN='FAKE-TOKEN-abc'\n" >"$CONF_DIR/badjira"
+OUT="$(BOARD_JIRA_CONFIG="$CONF_DIR/badjira" BOARD_WORKER_CONFIG="$CONF_DIR/new5" bash "$SETUP" --allowed acme 2>&1)"
+assert_eq "board-setup with an invalid Jira config exits 2" "2" "$?"
+assert_eq "board-setup does not leak the token for an invalid config" "0" "$(grep -c 'FAKE-TOKEN' <<<"$OUT")"
+reset_curl '401|{}'
+run_setup "$CONF_DIR/new6" --allowed acme
+assert_eq "board-setup reports a Jira error with exit 2" "2" "$CODE"
+assert_eq "board-setup keeps the config after a Jira error" "BOARD_ALLOWED_OWNERS=acme" "$(cat "$CONF_DIR/new6")"
+assert_eq "board-setup prints the Jira line without the token" "1 0" \
+  "$(grep -c 'Jira token rejected' <<<"$ERR") $(grep -c 'FAKE-TOKEN' <<<"$ERR")"
 rm -rf "$CONF_DIR"
 
 echo "Merge approval"
@@ -146,11 +187,11 @@ flag_of() {
     _ "$LIB"
 }
 assert_eq "absent flags default to blocking public, no infra" "[public] false" "$(flag_of "$FIX/config")"
-printf 'BOARD_OWNER=a\nBOARD_PROJECT=1\nBOARD_ALLOWED_OWNERS=a\nBOARD_BLOCKED_VISIBILITIES=\n' \
+printf 'BOARD_ALLOWED_OWNERS=a\nBOARD_BLOCKED_VISIBILITIES=\n' \
   >"$CF/set"
 printf 'BOARD_ALLOW_INFRA_CHANGE=true\n' >>"$CF/set"
 assert_eq "an empty blocked list and infra true are honoured" "[] true" "$(flag_of "$CF/set")"
-printf 'BOARD_OWNER=a\nBOARD_PROJECT=1\nBOARD_ALLOWED_OWNERS=a\nBOARD_ALLOW_INFRA_CHANGE=yes\n' >"$CF/bad"
+printf 'BOARD_ALLOWED_OWNERS=a\nBOARD_ALLOW_INFRA_CHANGE=yes\n' >"$CF/bad"
 BOARD_WORKER_CONFIG="$CF/bad" bash "$CHECK" BM-1 2>/dev/null
 assert_eq "an invalid flag exits 2" "2" "$?"
 rm -rf "$CF"
@@ -175,12 +216,9 @@ owner_ok acme/x
 assert_eq "acme/x is rejected" "1" "$?"
 
 echo "Board items"
-echo '{"items":[]}' >"$STUB_DIR/gh-output"
-rm -f "$STUB_DIR/gh-args"
 # shellcheck disable=SC1090
-assert_eq "board_items prints the gh output" '{"items":[]}' "$(source "$LIB"; board_items)"
-assert_eq "board_items lists project 9 as JSON" \
-  "project item-list 9 --owner bungamata --format json --limit 500" "$(cat "$STUB_DIR/gh-args")"
+assert_eq "the GitHub board_items helper is gone" "no" \
+  "$(source "$LIB"; declare -F board_items >/dev/null && echo yes || echo no)"
 
 echo "Ready check"
 run_check $'## Goal\nShip the board worker.\n\n## Acceptance criteria\n- [ ] Works\n'
@@ -1029,41 +1067,72 @@ set_progress "BM-20|2026-11-06T19:30:00.123+0800|gusdecool/x"
 run_precheck
 assert_eq "an unreadable Todo list exits 2" "2" "$CODE"
 
-# board-cleanup: only a clean worktree with a merged PR is removed.
+# board-cleanup: only a clean worktree with a merged PR, or a Done ticket, is removed. Worktrees are named bm-<n>.
 CLEANUP="$REPO/skills/board-worker/scripts/board-cleanup"
+# Creates a git repo at $STUB_DIR/<name> with an origin remote.
 make_wt() {
   mkdir -p "$STUB_DIR/$1" && git -C "$STUB_DIR/$1" init -q
   git -C "$STUB_DIR/$1" remote add origin https://github.com/acme/app.git
 }
-make_wt issue-1; make_wt issue-2; echo x >"$STUB_DIR/issue-2/dirty"
-jq -n --arg a "$STUB_DIR/issue-1" --arg b "$STUB_DIR/issue-2" '{result: {worktrees: [
-  {path: $a, displayName: "issue-1", branch: "refs/heads/feat/a", isMainWorktree: false},
-  {path: $b, displayName: "issue-2", branch: "refs/heads/feat/b", isMainWorktree: false},
+make_wt bm-1; make_wt bm-2; echo x >"$STUB_DIR/bm-2/dirty"
+jq -n --arg a "$STUB_DIR/bm-1" --arg b "$STUB_DIR/bm-2" '{result: {worktrees: [
+  {path: $a, displayName: "bm-1", branch: "refs/heads/BM-1-a", isMainWorktree: false},
+  {path: $b, displayName: "bm-2", branch: "refs/heads/BM-2-b", isMainWorktree: false},
   {path: "/main", displayName: "main", branch: "refs/heads/main", isMainWorktree: true}]}}' >"$STUB_DIR/orca-worktrees"
 echo 1 >"$STUB_DIR/gh-pr-list"
+# Answers the one Jira status search with the given "KEY|Status" pairs.
+set_statuses() {
+  local issues="[]" pair
+  for pair in "$@"; do
+    issues="$(jq -c --arg k "${pair%%|*}" --arg s "${pair#*|}" \
+      '. + [{key: $k, fields: {status: {name: $s}}}]' <<<"$issues")"
+  done
+  reset_curl "200|$(jq -cn --argjson i "$issues" '{issues: $i, isLast: true}')"
+}
+set_statuses 'BM-1|In progress' 'BM-2|In progress'
 : >"$STUB_DIR/calls.log"
 OUT="$(bash "$CLEANUP")"
 # Counts calls.log lines starting with the given text.
 calls() { grep -c "^$1" "$STUB_DIR/calls.log"; }
-assert_eq "cleanup removes a clean merged worktree" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-1")"
-assert_eq "cleanup closes its terminals" "1" "$(calls "orca terminal close --worktree path:$STUB_DIR/issue-1 --all")"
-assert_eq "cleanup deletes the remote branch" "1" "$(calls "api -X DELETE repos/acme/app/git/refs/heads/feat/a")"
-assert_eq "cleanup skips a dirty worktree" "0" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-2")"
+assert_eq "cleanup removes a clean merged worktree" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/bm-1")"
+assert_eq "cleanup closes its terminals" "1" "$(calls "orca terminal close --worktree path:$STUB_DIR/bm-1 --all")"
+assert_eq "cleanup deletes the remote branch" "1" "$(calls "api -X DELETE repos/acme/app/git/refs/heads/BM-1-a")"
+assert_eq "cleanup skips a dirty worktree" "0" "$(calls "orca worktree rm --worktree path:$STUB_DIR/bm-2")"
+assert_eq "cleanup asks Jira once for both keys" "1 1" \
+  "$(wc -l <"$STUB_DIR/curl-calls" | tr -d ' ') $(grep -c 'key%20in%20%28BM-1%2CBM-2%29' "$STUB_DIR/curl-calls")"
+assert_eq "cleanup never calls gh project" "0" "$(calls "project")"
 echo 0 >"$STUB_DIR/gh-pr-list"
-rm -f "$STUB_DIR/gh-fail-project-item-list"
-echo '{"items": [{"status": "In progress", "content": {"repository": "acme/app", "number": 1}}]}' \
-  >"$STUB_DIR/gh-project-item-list"
 : >"$STUB_DIR/calls.log"
 bash "$CLEANUP" >/dev/null
-assert_eq "cleanup skips an unmerged PR whose card is not Done" "0" "$(calls "orca worktree rm")"
-echo '{"items": [{"status": "Done", "content": {"repository": "acme/app", "number": 1}}]}' \
-  >"$STUB_DIR/gh-project-item-list"
+assert_eq "cleanup skips an unmerged PR whose ticket is not Done" "0" "$(calls "orca worktree rm")"
+set_statuses 'BM-1|Done' 'BM-2|Done'
 : >"$STUB_DIR/calls.log"
 bash "$CLEANUP" >/dev/null
-assert_eq "cleanup removes a Done card's worktree" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-1")"
+assert_eq "cleanup removes a Done ticket's worktree" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/bm-1")"
 assert_eq "cleanup keeps the remote branch when the PR is not merged" "0" "$(calls "api -X DELETE")"
 assert_eq "cleanup still skips a dirty Done worktree" "0" \
-  "$(calls "orca worktree rm --worktree path:$STUB_DIR/issue-2")"
+  "$(calls "orca worktree rm --worktree path:$STUB_DIR/bm-2")"
+set_statuses 'BM-1|Done (old)'
+: >"$STUB_DIR/calls.log"
+bash "$CLEANUP" >/dev/null
+assert_eq "cleanup needs the status name to be exactly Done" "0" "$(calls "orca worktree rm")"
+reset_curl '500|{}'
+: >"$STUB_DIR/calls.log"
+OUT="$(bash "$CLEANUP")"
+assert_eq "a Jira failure does not clean an unmerged worktree" "0" "$(calls "orca worktree rm")"
+assert_eq "a Jira failure prints one warn line" "1" "$(grep -c '^warn: could not read ticket statuses' <<<"$OUT")"
+echo 1 >"$STUB_DIR/gh-pr-list"
+reset_curl '500|{}'
+: >"$STUB_DIR/calls.log"
+bash "$CLEANUP" >/dev/null
+assert_eq "a Jira failure still cleans a merged PR" "1" "$(calls "orca worktree rm --worktree path:$STUB_DIR/bm-1")"
+# A worktree named for another project is not swept.
+make_wt issue-9
+jq -n --arg a "$STUB_DIR/issue-9" '{result: {worktrees: [
+  {path: $a, displayName: "issue-9", branch: "refs/heads/old", isMainWorktree: false}]}}' >"$STUB_DIR/orca-worktrees"
+: >"$STUB_DIR/calls.log"
+bash "$CLEANUP" >/dev/null
+assert_eq "cleanup ignores worktrees not named bm-<n>" "0" "$(calls "orca worktree rm")"
 
 if [ "$FAILS" -eq 0 ]; then echo "All board-worker tests passed"; fi
 exit "$FAILS"

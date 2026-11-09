@@ -2,8 +2,9 @@
 # Shared settings and helpers for the board-worker scripts. Source this file, do not run it.
 # Settings come from the user's config file, so the skill names no organization. Run board-setup to create it.
 # Config file: ${BOARD_WORKER_CONFIG:-$HOME/.config/board-worker/config}, plain KEY=VALUE lines:
-#   BOARD_OWNER=<owner of the GitHub Project>  BOARD_PROJECT=<project number>
 #   BOARD_ALLOWED_OWNERS=<comma-separated repo owners the worker may act on and merge in>
+# Old BOARD_OWNER and BOARD_PROJECT lines (from the GitHub Project days) are ignored. The Jira credentials live in a
+# separate file, see the Jira helpers below.
 # Optional flags (enforced by scripts, never by the model, so issue text cannot change them):
 #   BOARD_BLOCKED_VISIBILITIES=<comma list of public|internal|private, may be empty>  default: public
 #   BOARD_ALLOW_INFRA_CHANGE=<true|false>  default: false (an infra change is never auto-merged)
@@ -26,15 +27,13 @@ board_flag() {
   if board_config_has "$1"; then board_config_value "$1"; else printf '%s' "$2"; fi
 }
 
-# Loads and validates the config into BOARD_OWNER, BOARD_PROJECT and BOARD_ALLOWED_OWNERS. Returns 2 with one stderr
-# line when the file is missing or a value is invalid.
+# Loads and validates the config into BOARD_ALLOWED_OWNERS and the optional flags. Returns 2 with one stderr line
+# when the file is missing or a value is invalid.
 board_load_config() {
   if [ ! -r "$BOARD_CONFIG_FILE" ]; then
     echo "board-worker: no config at $BOARD_CONFIG_FILE; run $(dirname "${BASH_SOURCE[0]}")/board-setup" >&2
     return 2
   fi
-  BOARD_OWNER="$(board_config_value BOARD_OWNER)"
-  BOARD_PROJECT="$(board_config_value BOARD_PROJECT)"
   BOARD_ALLOWED_OWNERS="$(board_config_value BOARD_ALLOWED_OWNERS)"
   BOARD_BLOCKED_VISIBILITIES="$(board_flag BOARD_BLOCKED_VISIBILITIES public)"
   BOARD_ALLOW_INFRA_CHANGE="$(board_flag BOARD_ALLOW_INFRA_CHANGE false)"
@@ -46,8 +45,7 @@ board_load_config() {
     echo "board-worker: invalid flag in $BOARD_CONFIG_FILE (see board-lib.sh for the allowed values)" >&2
     return 2
   fi
-  if ! [[ "$BOARD_OWNER" =~ ^[A-Za-z0-9][A-Za-z0-9-]*$ && "$BOARD_PROJECT" =~ ^[0-9]+$ \
-    && "$BOARD_ALLOWED_OWNERS" =~ ^[A-Za-z0-9][A-Za-z0-9-]*(,[A-Za-z0-9][A-Za-z0-9-]*)*$ ]]; then
+  if ! [[ "$BOARD_ALLOWED_OWNERS" =~ ^[A-Za-z0-9][A-Za-z0-9-]*(,[A-Za-z0-9][A-Za-z0-9-]*)*$ ]]; then
     echo "board-worker: invalid or incomplete config at $BOARD_CONFIG_FILE; run board-setup again" >&2
     return 2
   fi
@@ -75,11 +73,6 @@ board_visibility_blocked() {
     *",$vis,"*) return 0 ;;
     *) return 1 ;;
   esac
-}
-
-# Prints every item on the board as JSON, up to 500 items.
-board_items() {
-  gh project item-list "$BOARD_PROJECT" --owner "$BOARD_OWNER" --format json --limit 500
 }
 
 # --- Jira helpers ---------------------------------------------------------------------------------------------------

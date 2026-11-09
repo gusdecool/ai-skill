@@ -1,21 +1,42 @@
 #!/usr/bin/env bash
-# Sweeps finished board workers: for every non-main Orca worktree named issue-<n> with no uncommitted changes whose
-# branch has a MERGED PR, or whose card is in the Done column, closes its terminals and removes the worktree.
-# The remote branch is deleted only when the PR is merged.
-# Why a sweep: a PR may be merged, or the card moved to Done, by a human long after the worker stopped, so one pass
+# Sweeps finished board workers: for every non-main Orca worktree named <project>-<n> (for example bm-123, the lower
+# case Jira project key and the ticket number) with no uncommitted changes whose branch has a MERGED PR, or whose
+# ticket is Done, closes its terminals and removes the worktree. The remote branch is deleted only when the PR is
+# merged.
+# Why a sweep: a PR may be merged, or the ticket moved to Done, by a human long after the worker stopped, so one pass
 # over all worktrees catches every case. A dirty worktree is never touched. Prints one line per worktree handled.
+# Jira is asked once for all tickets. If that read fails, nothing is cleaned because of "Done" (one warn line).
 set -uo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
 
-# Card statuses by "owner/repo#number", one per line, so each worktree is matched without another API call.
-statuses="$(board_items 2>/dev/null | jq -r '.items[] | select(.content.number != null)
-  | "\(.content.repository)#\(.content.number)\t\(.status // "")"')" || statuses=""
+jira_load_config || exit 2
+prefix="$(tr '[:upper:]' '[:lower:]' <<<"$JIRA_PROJECT")"
 
-orca worktree list --json |
-  jq -r '.result.worktrees[] | select(.isMainWorktree == false and (.displayName | test("^issue-[0-9]+$")))
-         | [.path, (.branch | sub("^refs/heads/"; ""))] | @tsv' |
+rows="$(orca worktree list --json |
+  jq -r --arg re "^${prefix}-[0-9]+\$" \
+    '.result.worktrees[] | select(.isMainWorktree == false and (.displayName | test($re)))
+     | [.path, (.branch | sub("^refs/heads/"; ""))] | @tsv')" || rows=""
+
+# Collect the ticket keys of the matching worktrees, then ask Jira once for their statuses.
+keys=""
 while IFS=$'\t' read -r path branch; do
+  [ -n "$path" ] || continue
+  key="$(jira_key "$(basename "$path" | tr '[:lower:]' '[:upper:]')")" || continue
+  keys="${keys:+$keys,}$key"
+done <<<"$rows"
+
+statuses=""
+if [ -n "$keys" ]; then
+  if found="$(jira_search "key in ($keys)" "status")"; then
+    statuses="$(jq -r '.[] | "\(.key)\t\(.fields.status.name // "")"' <<<"$found")" || statuses=""
+  else
+    echo "warn: could not read ticket statuses from Jira; cleaning merged PRs only"
+  fi
+fi
+
+while IFS=$'\t' read -r path branch; do
+  [ -n "$path" ] || continue
   name="$(basename "$path")"
   # Skip a worktree that still holds uncommitted work.
   if [ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]; then
@@ -23,9 +44,9 @@ while IFS=$'\t' read -r path branch; do
   fi
   # Find the GitHub repo from the worktree's origin remote.
   slug="$(git -C "$path" remote get-url origin | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')"
-  # Clean up only when the branch's PR is merged or the card is Done.
+  # Clean up only when the branch's PR is merged or the ticket is Done.
   merged="$(gh pr list --repo "$slug" --head "$branch" --state merged --json number --jq 'length')"
-  status="$(awk -F'\t' -v k="$slug#${name#issue-}" '$1 == k { print $2 }' <<<"$statuses")"
+  status="$(awk -F'\t' -v k="$(tr '[:lower:]' '[:upper:]' <<<"$name")" '$1 == k { print $2 }' <<<"$statuses")"
   if [ "${merged:-0}" -lt 1 ] && [ "$status" != "Done" ]; then
     echo "skip $path: no merged PR and card not Done for $branch"; continue
   fi
@@ -36,4 +57,4 @@ while IFS=$'\t' read -r path branch; do
     gh api -X DELETE "repos/$slug/git/refs/heads/$branch" >/dev/null || echo "warn: remote branch delete failed"
   fi
   echo "cleaned $path ($slug $branch)"
-done
+done <<<"$rows"
