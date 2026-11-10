@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Picks the provider for the next worker by remaining quota, using the load-balancer urgency formula. No model needed.
+# Usage: pick-provider --reserved <provider|none> [--bump <provider>]... [--exclude a,b] [--orchestrator]
+#   --reserved     the provider the caller runs on; it gets the 80 session / 75 weekly+monthly cutoffs (use `none`
+#                  when the caller is not one of the four providers).
+#   --bump         adds 5 points to that provider's session usedPercent (repeat once per task already picked in
+#                  this batch), so parallel tasks spread out.
+#   --exclude      comma separated providers to leave out (for example those with no model in the asked tier).
+#   --orchestrator only the reserved provider is considered, with 90 in every window (the pause check).
+# Prints one JSON object: {reserved, providers[{provider, skipped, reason, score, freeAt, windows[...]}], chosen,
+# earliestResetsAt (only when nothing is eligible), table (markdown score table)}. Exit 0 when a provider is chosen,
+# 1 when none is eligible, 2 when quotas cannot be read or the arguments are wrong.
+# Rules: skip a provider at session >= 90 or weekly / monthly >= 95 (80 / 75 when reserved); per window
+# remaining = 100 - usedPercent, timeLeftFraction = (resetsAt - now) / (windowMinutes * 60000) with a floor of 0.05,
+# urgency = remaining / timeLeftFraction; score = highest window urgency; highest score wins; scores within 5 percent
+# tie and go to the reserved provider, then to the listed order. Providers: claude, codex, antigravity, opencodeGo.
+# Env: ORCA_BIN (default: orca from PATH, else ORCA_FALLBACK_BIN), NOW_MS (clock in ms, for tests).
+set -euo pipefail
+
+# Prints the orca binary to run: ORCA_BIN, else orca on PATH, else the Orca app's own copy.
+orca_bin() {
+  if [ -n "${ORCA_BIN:-}" ]; then echo "$ORCA_BIN"
+  elif command -v orca >/dev/null 2>&1; then command -v orca
+  else echo "${ORCA_FALLBACK_BIN:-/Applications/Orca.app/Contents/Resources/bin/orca}"
+  fi
+}
+
+# Prints a usage error and exits 2.
+die() { echo "pick-provider: $*" >&2; exit 2; }
+
+reserved=""
+exclude=""
+orchestrator=false
+bumps="[]"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --reserved) shift; reserved="${1:-}" ;;
+    --bump) shift; bumps="$(jq -c --arg p "${1:-}" '. + [$p]' <<<"$bumps")" ;;
+    --exclude) shift; exclude="${1:-}" ;;
+    --orchestrator) orchestrator=true ;;
+    *) die "unknown argument '$1'" ;;
+  esac
+  shift
+done
+case "$reserved" in
+  claude | codex | antigravity | opencodeGo | none) ;;
+  *) die "--reserved is required: claude, codex, antigravity, opencodeGo or none" ;;
+esac
+jq -e 'all(.[]; IN("claude", "codex", "antigravity", "opencodeGo"))' <<<"$bumps" >/dev/null || die "bad --bump provider"
+
+accounts="$("$(orca_bin)" account list --json)" || die "cannot read quotas"
+now_ms="${NOW_MS:-$(($(date +%s) * 1000))}"
+
+result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson bumps "$bumps" --arg res "$reserved" \
+  --arg exclude "$exclude" '
+  # Cutoff for a window: the orchestrator check uses 90; the reserved provider keeps quota for planning and review.
+  def cutoff($p; $n):
+    if $orch then 90
+    elif $p == $res then (if $n == "session" then 80 else 75 end)
+    else (if $n == "session" then 90 else 95 end) end;
+  def r1: . * 10 | round / 10;
+  # One quota window with its remaining share, time fraction, urgency and cutoff verdict.
+  def window($p; $n; $w):
+    (if $n == "session" then ([$w.usedPercent + 5 * ($bumps | map(select(. == $p)) | length), 100] | min)
+     else $w.usedPercent end) as $used
+    | ([($w.resetsAt - $now) / ($w.windowMinutes * 60000), 0.05] | max) as $tlf
+    | {window: $n, usedPercent: $used, remaining: (100 - $used), timeLeftFraction: ($tlf * 1000 | round / 1000),
+       urgency: (((100 - $used) / $tlf) | r1), cutoff: cutoff($p; $n), over: ($used >= cutoff($p; $n)),
+       resetsAt: $w.resetsAt};
+  ($exclude | split(",")) as $excluded
+  | [.result.rateLimits | to_entries[] | select(.key | IN("claude", "codex", "antigravity", "opencodeGo"))
+     | .key as $p | .value as $v
+     | [("session", "weekly", "monthly") as $n | select($v[$n] != null) | window($p; $n; $v[$n])] as $ws
+     | ($ws | map(select(.over))) as $blocked
+     | {provider: $p, windows: $ws,
+        score: (if ($ws | length) > 0 then ($ws | map(.urgency) | max) else null end),
+        freeAt: (if ($blocked | length) > 0 then ($blocked | map(.resetsAt) | max) else null end),
+        reason: (if $orch and $p != $res then "not the orchestrator"
+                 elif ($excluded | index($p)) != null then "excluded"
+                 elif $v.status != "ok" then "status " + ($v.status // "missing")
+                 elif ($ws | length) == 0 then "no quota windows"
+                 elif ($blocked | length) > 0 then
+                   ($blocked | map(.window + " " + (.usedPercent | tostring) + " >= " + (.cutoff | tostring))
+                    | join(", ")) + (if $p == $res and ($orch | not) then " (reserved)" else "" end)
+                 else null end)}
+     | .skipped = (.reason != null)] as $ps
+  | ($ps | map(select(.skipped | not))) as $ok
+  | (($ok | map(.score) | max) // 0) as $top
+  | ([$ok[] | select(.score >= $top * 0.95)] | (map(select(.provider == $res)) + .)[0].provider) as $chosen
+  | def cell($p; $n): ([$p.windows[] | select(.window == $n) | .urgency | tostring][0] // "-");
+    {reserved: $res, providers: $ps, chosen: $chosen}
+    + (if $chosen == null then
+         {earliestResetsAt: ([$ps[] | select(.freeAt != null) | .freeAt] | min)} else {} end)
+    + {table: (["| Provider | Session | Weekly | Monthly | Score | Result |", "|---|---|---|---|---|---|"]
+        + [$ps[] | "| \(.provider) | \(cell(.; "session")) | \(cell(.; "weekly")) | \(cell(.; "monthly")) | "
+           + "\(.score // "-") | "
+           + (if .skipped then "skipped: " + .reason elif .provider == $chosen then "chosen" else "eligible" end)
+           + " |"]
+        | join("\n"))}' <<<"$accounts")" || die "cannot compute the scores"
+echo "$result"
+jq -e '.chosen != null' <<<"$result" >/dev/null || exit 1

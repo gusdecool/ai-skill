@@ -10,7 +10,7 @@ that read the shared skills folder.
 | `/gusdecool:authoring-skills` | Change a skill by PR in its source repo, then install | [SKILL.md][authoring-skills] |
 | `/gusdecool:board-issue` | Write a board-ready issue (final spec, optional Auto merge) | [SKILL.md][board-issue] |
 | `/gusdecool:board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][board-worker] |
-| `/gusdecool:git-workflow` | Branches, commits, PRs, CI, optional project board | [SKILL.md][git-workflow] |
+| `/gusdecool:git-workflow` | Git rules: branches, commits, PRs, CI, project board | [SKILL.md][git-workflow] |
 | `/gusdecool:infra-conventions` | IaC, CI pinning, migrations, deploy-failure logs | [SKILL.md][infra-conventions] |
 | `/gusdecool:load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][load-balancer] |
 | `/gusdecool:long-task-communication` | Estimate, follow-ups, blocked-by-limit | [SKILL.md][long-task-communication] |
@@ -24,7 +24,7 @@ In Claude Code the skill is `/gusdecool:<name>`. In other agents, say its name, 
 [authoring-skills]: skills/authoring-skills/SKILL.md
 [board-issue]: skills/board-issue/SKILL.md
 [board-worker]: skills/board-worker/SKILL.md
-[git-workflow]: skills/git-workflow/SKILL.md
+[git-workflow]: skills/gusdecool-git-workflow/SKILL.md
 [infra-conventions]: skills/infra-conventions/SKILL.md
 [load-balancer]: skills/load-balancer/SKILL.md
 [long-task-communication]: skills/long-task-communication/SKILL.md

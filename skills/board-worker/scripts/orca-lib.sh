@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Shared by pick-provider and board-watch. Source it; do not run it.
+# Shared by board-watch and the other board scripts. Source it; do not run it.
 
 # Prints the orca binary to run: ORCA_BIN, else orca on PATH, else the Orca app's own copy. Why: the Orca scheduler
 # runs the precheck with a PATH that lacks the app's bin folder, so a bare `orca` fails there.

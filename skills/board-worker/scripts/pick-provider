@@ -1,24 +1,20 @@
 #!/usr/bin/env bash
 # Picks the provider and model for the next worker, by remaining quota, at the asked tier (default Mid).
 # Usage: pick-provider [--tier Low|Mid|High|Ultra] [--orchestrator]
-# A provider whose models.md cell for the tier is `none` is skipped; the tier is never swapped. Only the Mid model ids
-# are held here, so another tier with a model in the table exits 2 until its id is added.
+# The quota scoring (cutoffs, urgency, tie-break) is done by the load-balancer skill's own pick-provider, so the formula
+# exists once; this script only adds the tier and the model. A provider whose models.md cell for the tier is `none` is
+# left out of the scoring; the tier is never swapped. Only the Mid model ids are held here, so another tier with a model
+# in the table exits 2 until its id is added.
 # --orchestrator considers only claude (the session that runs the ticket) and needs it under 90 in both windows.
 # The reserved 80 / 75 cutoffs do not apply to it: they only keep claude off implementation work, and an orchestrator
 # over them still plans, delegates to other providers and reviews (load-balancer skill, "Pause").
 # Prints {"provider","model","tier"} and exits 0, or {"error","earliestResetsAt"} and exits 1 when every provider is
 # over a cutoff or unavailable. Exits 2 when quotas cannot be read.
-# Rules and numbers are copied from skills/load-balancer/SKILL.md: cutoffs 90 session / 95 weekly (80 / 75 for the
-# reserved provider, claude, which runs this skill); urgency = remaining / max(timeLeftFraction, 0.05) per window;
-# the highest window urgency is the score (the load-balancer's "+5 session points per parallel task" rule is
-# omitted: this script starts one worker at a time); a provider with no window is dropped; scores within 5
-# percent tie and go to claude, then to the listed order.
+# The "+5 session points per parallel task" rule is not used: this script starts one worker at a time.
 # Env: MODELS_FILE (default: global/models.md in AGENT_STANDARDS_DIR, default ~/Developer/gusdecool/agent-standards),
-# ORCA_BIN (default: orca from PATH, else ORCA_FALLBACK_BIN), ORCA_FALLBACK_BIN (default: the Orca app's bin),
-# CODEX_MODELS_CACHE (default ~/.codex/models_cache.json), NOW_MS (clock, for tests).
+# LB_PICK_PROVIDER (default: the load-balancer skill's script next to this skill), ORCA_BIN, ORCA_FALLBACK_BIN
+# (passed through), CODEX_MODELS_CACHE (default ~/.codex/models_cache.json), NOW_MS (clock, for tests).
 set -euo pipefail
-
-source "$(dirname "${BASH_SOURCE[0]}")/orca-lib.sh"
 
 # Prints the highest visible Sol model slug from the Codex models cache (compared by version number).
 codex_model() {
@@ -52,59 +48,41 @@ case "$tier" in
 esac
 models_file="${MODELS_FILE:-${AGENT_STANDARDS_DIR:-$HOME/Developer/gusdecool/agent-standards}/global/models.md}"
 
-accounts="$("$(orca_bin)" account list --json)" || { echo "pick-provider: cannot read quotas" >&2; exit 2; }
 now_ms="${NOW_MS:-$(($(date +%s) * 1000))}"
 
-# Keep only the four known providers, in listed order, scored; blocked ones carry the time they free up.
-result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" '
-  def cutoffs($p): if $p == "claude" and ($orch | not) then {session: 80, weekly: 75, monthly: 75}
-    elif $p == "claude" then {session: 90, weekly: 90, monthly: 90} else {session: 90, weekly: 95, monthly: 95} end;
-  def urgency($w): (100 - $w.usedPercent)
-    / ([($w.resetsAt - $now) / ($w.windowMinutes * 60000), 0.05] | max);
-  [.result.rateLimits | to_entries[] | select(.key | IN("claude", "codex", "antigravity", "opencodeGo"))
-   | select(.value.status == "ok") | (if .key == "opencodeGo" then "opencode" else .key end) as $p | cutoffs($p) as $c
-   | [{n: "session", w: .value.session}, {n: "weekly", w: .value.weekly}, {n: "monthly", w: .value.monthly}]
-   | map(select(.w != null)) as $ws
-   | select(($ws | length) > 0)
-   | ($ws | map(select(.w.usedPercent >= $c[.n]))) as $blocked
-   | {provider: $p,
-      freeAt: ($blocked | map(.w.resetsAt) | max),
-      score: ($ws | map(urgency(.w)) | max)}]' <<<"$accounts")"
-
-# For the orchestrator only claude counts; the rest of the script then works unchanged.
-if [ "$orchestrator" = true ]; then result="$(jq -c 'map(select(.provider == "claude"))' <<<"$result")"; fi
-
-# Drop providers that have no model in the asked tier. Mid is the baseline every provider fills, so a missing table
-# is only fatal for the other tiers.
+# Scoring is shared with the load-balancer skill. Providers with no model in the asked tier are excluded from it.
+lb_script="${LB_PICK_PROVIDER:-$(dirname "${BASH_SOURCE[0]}")/../../load-balancer/scripts/pick-provider}"
 if [ ! -r "$models_file" ] && [ "$tier" != "Mid" ]; then
   echo "pick-provider: cannot read $models_file to check tier $tier" >&2; exit 2
 fi
+exclude=""
 if [ -r "$models_file" ]; then
-  kept="[]"
-  for p in $(jq -r '.[].provider' <<<"$result"); do
-    case "$p" in claude) row=Claude ;; codex) row=Codex ;; antigravity) row=Gemini ;; opencode) row=DeepSeek ;; esac
+  for p in claude codex antigravity opencodeGo; do
+    case "$p" in claude) row=Claude ;; codex) row=Codex ;; antigravity) row=Gemini ;; opencodeGo) row=DeepSeek ;; esac
     if [ "$(table_cell "$row" "$tier")" = "none" ]; then
-      echo "pick-provider: $p has no $tier model in models.md" >&2
-    else
-      kept="$(jq -c --arg p "$p" '. + [$p]' <<<"$kept")"
+      echo "pick-provider: ${p/opencodeGo/opencode} has no $tier model in models.md" >&2
+      exclude="${exclude:+$exclude,}$p"
     fi
   done
-  result="$(jq -c --argjson k "$kept" 'map(select(.provider as $p | $k | index($p)))' <<<"$result")"
-  if [ "$(jq length <<<"$result")" -eq 0 ]; then
+fi
+lb_args=(--reserved claude --exclude "$exclude")
+if [ "$orchestrator" = true ]; then lb_args+=(--orchestrator); fi
+code=0
+scored="$(NOW_MS="$now_ms" bash "$lb_script" "${lb_args[@]}")" || code=$?
+[ "$code" -ne 2 ] || { echo "pick-provider: cannot read quotas" >&2; exit 2; }
+
+provider="$(jq -r '.chosen // empty' <<<"$scored")"
+if [ -z "$provider" ]; then
+  # Every provider that has quota windows lacking a model in this tier is a tier problem, not a quota problem.
+  if [ "$orchestrator" = false ] && jq -e '[.providers[] | select(.windows | length > 0)]
+    | length > 0 and all(.reason == "excluded")' <<<"$scored" >/dev/null; then
     jq -nc --arg t "$tier" '{error: ("no provider has a " + $t + " model")}'
     exit 1
   fi
-fi
-
-eligible="$(jq -c '[.[] | select(.freeAt == null)]' <<<"$result")"
-if [ "$(jq length <<<"$eligible")" -eq 0 ]; then
-  jq -c '{error: "all providers over cutoff", earliestResetsAt: (map(.freeAt) | min)}' <<<"$result"
+  jq -c '{error: "all providers over cutoff", earliestResetsAt}' <<<"$scored"
   exit 1
 fi
-
-# Highest score wins; within 5 percent of it, claude wins, else the first listed.
-provider="$(jq -r '(map(.score) | max) as $top | [.[] | select(.score >= $top * 0.95)]
-  | (map(select(.provider == "claude")) + .)[0].provider' <<<"$eligible")"
+provider="${provider/opencodeGo/opencode}"
 
 if [ "$tier" != "Mid" ]; then
   echo "pick-provider: no model id is held for $provider at tier $tier" >&2; exit 2
