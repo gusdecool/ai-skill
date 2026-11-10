@@ -12,7 +12,7 @@ that read the shared skills folder.
 | `/gusdecool:load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][load-balancer] |
 | `/gusdecool:mysql-branch` | MySQL branching: one database per git branch / worktree | [SKILL.md][mysql-branch] |
 
-In Claude Code the skill is `/gusdecool:<name>`. In other agents, say its name, for example "use MySQL branch".
+Each agent calls a skill by its `gusdecool-` name, for example `gusdecool-mysql-branch`.
 
 [board-issue]: skills/board-issue/SKILL.md
 [board-worker]: skills/board-worker/SKILL.md
@@ -76,9 +76,7 @@ The board scripts read at most 500 items from the project board (a known limit).
 
 ## Install
 
-You need Docker (for the MySQL your apps use) and git. Pick one way.
-
-### Option A: any agent (Claude Code, Codex and others)
+You need Docker (for the MySQL your apps use) and git.
 
 ```
 npx skills add gusdecool/ai-skill
@@ -87,31 +85,10 @@ npx skills add gusdecool/ai-skill
 The `skills` tool asks which skills and which agents to install for. Choose the skills you want. It lands in
 `~/.agents/skills/`, which Codex and other agents read, and it is linked into `~/.claude/skills/` for Claude Code.
 
-### Option B: Claude Code plugin
-
-Inside Claude Code:
-
-```
-/plugin marketplace add gusdecool/ai-skill
-/plugin install gusdecool@gusdecool
-```
-
-Plugin skills are namespaced, so the command becomes `/gusdecool:mysql-branch`. Every skill added to this repo later
-shows up as `/gusdecool:<skill-name>`.
-
-### Option C: Codex plugin
-
-```
-codex plugin marketplace add gusdecool/ai-skill
-codex plugin add gusdecool
-```
-
 ### Check it works
 
-Restart or open a new agent session and ask: "what skills do you have?" You should see `mysql-branch`.
-To update later, run `npx skills update` (Option A),
-`/plugin marketplace update gusdecool` (Option B)
-or `codex plugin marketplace upgrade` (Option C).
+Restart or open a new agent session and ask: "what skills do you have?" You should see `gusdecool-mysql-branch`.
+To update later, run `npx skills update`.
 
 ## mysql-branch
 
