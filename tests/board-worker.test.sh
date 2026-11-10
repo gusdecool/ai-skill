@@ -1200,5 +1200,53 @@ jq -n --arg a "$STUB_DIR/issue-9" '{result: {worktrees: [
 bash "$CLEANUP" >/dev/null
 assert_eq "cleanup ignores worktrees not named bm-<n>" "0" "$(calls "orca worktree rm")"
 
+# --- board-run-stats, board-ticket-cli stats and board-setup --stats-fields ---
+RUNSTATS="$REPO/skills/board-worker/scripts/board-run-stats"
+TICKET="$REPO/skills/board-worker/scripts/board-ticket-cli"
+export BOARD_CLAUDE_PROJECTS="$FIX/claude-logs"
+OUT="$(bash "$RUNSTATS" /wt/bm-1)"
+assert_eq "stats counts a streamed message once and prices known models" "0.0048" \
+  "$(jq -r '.models[] | select(.model == "claude-sonnet-5-5") | .costUsd' <<<"$OUT")"
+assert_eq "stats sums every token kind" "3470" "$(jq -r '.tokens' <<<"$OUT")"
+assert_eq "stats measures minutes from first to last message" "39.9" "$(jq -r '.minutes' <<<"$OUT")"
+assert_eq "stats lists an unpriced model" "claude-mystery-9" "$(jq -r '.unpriced[0]' <<<"$OUT")"
+OUT="$(bash "$RUNSTATS" /wt/bm-1 --since 2026-11-10T05:20:00Z)"
+assert_eq "stats --since drops older messages" "2320" "$(jq -r '.tokens' <<<"$OUT")"
+OUT="$(bash "$RUNSTATS" /wt/none 2>/dev/null)"; CODE=$?
+assert_eq "stats with no logs exits 0 with zeros" "0 0" "$CODE $(jq -r '.tokens' <<<"$OUT")"
+bash "$RUNSTATS" /wt/bm-1 --since yesterday >/dev/null 2>&1
+assert_eq "stats rejects a bad --since" "2" "$?"
+
+FIELDS='[{"id":"customfield_1","name":"Agent minutes","custom":true},
+  {"id":"customfield_2","name":"Agent tokens","custom":true},
+  {"id":"customfield_3","name":"Agent cost USD","custom":true}]'
+FIELDS="$(jq -c . <<<"$FIELDS")"
+RUN='{"minutes":10,"tokens":100,"costUsd":1.5,"markdown":"Agent run table"}'
+reset_curl "200|$FIELDS" '200|{"fields":{"customfield_1":5}}' '200|{"fields":{"customfield_2":null}}' \
+  '200|{"fields":{}}' '204|' '201|{}'
+printf '%s' "$RUN" | bash "$TICKET" stats BM-1; CODE=$?
+assert_eq "ticket stats succeeds" "0" "$CODE"
+assert_eq "ticket stats adds to the existing field values" \
+  '{"fields":{"customfield_1":15,"customfield_2":100,"customfield_3":1.5}}' \
+  "$(grep '^PUT ' "$STUB_DIR/curl-calls" | sed 's/^PUT [^ ]* //')"
+assert_eq "ticket stats posts the markdown comment" "1" "$(grep -c 'comment .*Agent run table' "$STUB_DIR/curl-calls")"
+reset_curl '200|[]' '201|{}'
+OUT="$(printf '%s' "$RUN" | bash "$TICKET" stats BM-1 2>&1)"; CODE=$?
+assert_eq "ticket stats with no fields still comments and warns" "0 1 0" \
+  "$CODE $(grep -c 'board-setup --stats-fields' <<<"$OUT") $(grep -c '^PUT ' "$STUB_DIR/curl-calls")"
+reset_curl '200|[]'
+printf 'nope' | bash "$TICKET" stats BM-1 >/dev/null 2>&1
+assert_eq "ticket stats rejects input that is not run stats" "2" "$?"
+
+SETUP_FIELDS='[{"id":"customfield_9","name":"Auto merge","custom":true},
+  {"id":"customfield_2","name":"Agent tokens","custom":true},
+  {"id":"customfield_3","name":"Agent cost USD","custom":true}]'
+reset_curl "200|$(jq -c . <<<"$SETUP_FIELDS")" '200|{"values":[{"id":10068}]}' \
+  '201|{"id":"customfield_11"}' '200|[{"id":7}]' '200|{}' '200|[{"id":7}]' '200|{}' '200|[{"id":7}]' '200|{}'
+OUT="$(bash "$SETUP" --stats-fields 2>&1)"; CODE=$?
+assert_eq "setup --stats-fields creates the missing field and adds all three to the screen" "0 1 3" \
+  "$CODE $(grep -c 'created field Agent minutes' <<<"$OUT") \
+$(grep -c 'POST .*screens/10068/tabs/7/fields' "$STUB_DIR/curl-calls")"
+
 if [ "$FAILS" -eq 0 ]; then echo "All board-worker tests passed"; fi
 exit "$FAILS"

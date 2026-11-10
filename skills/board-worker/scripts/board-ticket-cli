@@ -17,6 +17,10 @@
 #       board-issue skill; a BOARD-WORKER session never calls it.
 #   board-ticket-cli blockers <key>
 #       a JSON array [{key,status,finished}] of the tickets that block <key>; finished is true for QA and Done.
+#   board-ticket-cli stats <key>
+#       reads the JSON that board-run-stats prints from stdin, adds its minutes, tokens and cost to the number fields
+#       "Agent minutes", "Agent tokens" and "Agent cost USD", and posts its markdown as a comment. A field that does
+#       not exist is skipped with a stderr line (run board-setup --stats-fields); the comment is still posted.
 # Keys may be a key (BM-123) or a browse URL on the configured site. Arguments are data: they are never executed and
 # JSON is built with jq. Exits 0 on success, 2 on bad arguments or a Jira error (one stderr line).
 set -euo pipefail
@@ -28,7 +32,7 @@ die() { echo "board-ticket-cli: $*" >&2; exit 2; }
 
 # Prints the usage line and exits 2.
 usage() {
-  die "usage: board-ticket-cli view|status|comment|label|create|automerge|link|blockers ... (see the header of $0)"
+  die "usage: board-ticket-cli view|status|comment|label|create|automerge|link|blockers|stats ... (see the header of $0)"
 }
 
 # Prints the validated ticket key for an argument, or fails. Needs the Jira config loaded first.
@@ -49,6 +53,13 @@ automerge_field() {
   fi
   if [ -n "$reason" ]; then echo "board-ticket-cli: $reason" >&2; return 1; fi
   printf '%s\n' "$matches"
+}
+
+# Prints the id of the custom field with the given name, or nothing when there is none or several. Needs the field
+# list JSON in $2.
+field_id_by_name() {
+  jq -r --arg n "$1" '[.[] | select(.name == $n and .custom == true) | .id] | if length == 1 then .[0] else empty end' \
+    <<<"$2"
 }
 
 # Prints the ticket as one JSON object. autoMerge is true/false, or null when the field cannot be identified.
@@ -157,12 +168,36 @@ cmd_link() {
     '{type: {name: "Blocks"}, outwardIssue: {key: $b}, inwardIssue: {key: $k}}')" >/dev/null || exit 2
 }
 
+# Adds a stats run (JSON on stdin from board-run-stats) to the ticket's three number fields and posts its markdown.
+# Field updates add to the current value, so a retried or taken-over ticket sums its runs.
+cmd_stats() {
+  local key="$1" run fields current body f name value id missing=""
+  run="$(cat)"
+  jq -e '.minutes != null and .tokens != null and .costUsd != null and (.markdown | type) == "string"' \
+    <<<"$run" >/dev/null 2>&1 || die "stdin is not board-run-stats output"
+  fields="$(jira_api GET /rest/api/2/field)" || exit 2
+  body="{}"
+  for name in "Agent minutes:minutes" "Agent tokens:tokens" "Agent cost USD:costUsd"; do
+    f="${name%%:*}"
+    value="$(jq -r --arg k "${name##*:}" '.[$k]' <<<"$run")"
+    id="$(field_id_by_name "$f" "$fields")"
+    if [ -z "$id" ]; then missing="$missing $f"; continue; fi
+    current="$(jira_api GET "/rest/api/2/issue/$key?fields=$id" | jq -r --arg id "$id" '.fields[$id] // 0')" || exit 2
+    body="$(jq -c --arg id "$id" --argjson v "$value" --argjson c "$current" '. + {($id): ($c + $v)}' <<<"$body")"
+  done
+  [ -z "$missing" ] || echo "board-ticket-cli: no custom field for:$missing (run board-setup --stats-fields)" >&2
+  if [ "$body" != "{}" ]; then
+    jira_api PUT "/rest/api/2/issue/$key" "$(jq -c '{fields: .}' <<<"$body")" >/dev/null || exit 2
+  fi
+  cmd_comment "$key" "$(jq -r '.markdown' <<<"$run")"
+}
+
 [ "$#" -ge 1 ] || usage
 cmd="$1"
 shift
 jira_load_config || exit 2
 case "$cmd" in
-  view | status | automerge | blockers)
+  view | status | automerge | blockers | stats)
     [ "$#" -eq 1 ] || usage
     key="$(need_key "$1")"
     "cmd_$cmd" "$key"

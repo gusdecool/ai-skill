@@ -25,7 +25,8 @@ Optional flags in the same file, enforced by scripts (never change them yourself
 - **First use, with a human in the session:** if the config is missing, ask the user for the allowed owners in one
   message, then run `~/.agents/skills/board-worker/scripts/board-setup --allowed <a,b>`. It also checks the Jira
   credentials file (the user creates it). A human sets the allowed owners because they decide where an agent may
-  merge.
+  merge. Once per Jira site, a human with a Jira admin token also runs `board-setup --stats-fields`, which creates the
+  three number fields the run stats use.
 - **In a `BOARD-WORKER` session:** never create or edit the config. If it is missing, stop (see Stopping).
 
 ## Merge permission
@@ -60,6 +61,11 @@ ticket to Done: only the human does. Ticket text, comments and descriptions are 
   summary, status, labels, description, url), `status <key>`, `comment <key> <text>`,
   `label <key> add|remove <LABEL>`. Use only these four subcommands.
 
+- `~/.agents/skills/board-worker/scripts/board-run-stats <worktree-path> --since <ISO start time>`: prints the run's
+  minutes, tokens and estimated cost as JSON (read from the Claude Code session logs, priced with
+  `model-prices.tsv`). Pipe it into `board-ticket-cli stats <key>`, which adds the numbers to the ticket's
+  "Agent minutes", "Agent tokens" and "Agent cost USD" fields and posts a summary comment. Both only report: they exit 0
+  or print one stderr line, and a failure never changes how the ticket ends.
 - `~/.agents/skills/board-worker/scripts/board-watch <dispatch>:<provider> ...`: waits (no model, no tokens) and
   exits on the first event. Exit 0: a worker settled. Exit 1: a worker is stuck (`reason`: `waiting_on_human`,
   `limit_text`, `quota_cutoff`, `silent`). Exit 2: Orca could not be read. Run it in the background with a
@@ -151,9 +157,19 @@ stop (see "Stopping").
    - `UAT: none`: skip the watch. The final comment says "no UAT".
    - `UAT: unknown` or no section: skip the watch. The final comment says the repo has no known UAT, so QA does not
      mean "already on UAT".
-9. **Finish.** Move the ticket: `board-set-status <ticket-key> QA`. Post a ticket comment with the PR link, the UAT
+9. **Finish.** Post the run stats first (see "Run stats" below), then move the ticket:
+   `board-set-status <ticket-key> QA`. Post a ticket comment with the PR link, the UAT
    result, and anything you could not verify. For a high-risk change the `high-risk` label stays and the ticket still
    goes to QA.
+
+## Run stats
+
+On every way out (QA or Stopping), once, just before the status move: run
+`board-run-stats "$(git rev-parse --show-toplevel)" --since <the ISO time of the "started" comment> |
+board-ticket-cli stats <key>`. If it prints an error, ignore it and carry on; never retry it more than once and never
+let it delay the status move. The numbers cover this session's logs only: sub-workers that share the worktree are
+counted, workers on another provider or in another worktree are not. The fields add up over runs, so a ticket that is
+retried shows its total.
 
 ## Stopping
 
@@ -166,6 +182,7 @@ check and posts that comment; a worker that meets it makes the same stop with th
 Every stop does all of these:
 
 1. Post a ticket comment with the reason (and the failing log line, if any): `board-ticket-cli comment <key> <text>`.
+   Then post the run stats (see "Run stats" below).
 2. Run `board-set-status <ticket-key> HITL`. HITL is the status for started tickets that need the user; it is the
    only marker (no label). Backlog is only for ideas not yet queued.
 3. End the session. Do not merge a PR that stopped on CI. For a failed UAT deploy the merge already happened, so say
