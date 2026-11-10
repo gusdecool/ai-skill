@@ -56,14 +56,14 @@
 **Interfaces:**
 - Consumes: the Todo search now also returns `issuelinks`.
 
-- [ ] **Step 1: Write failing tests** for each rule in the spec: blocker in Todo is picked first (and a chain of
+- [x] **Step 1: Write failing tests** for each rule in the spec: blocker in Todo is picked first (and a chain of
   two); blocker In progress skips quietly; blocker in Backlog or HITL parks with a comment naming it; blocker QA or
   Done is no blocker; cycle parks both; blocker of a not-allowed owner parks the dependent; a `Relates` link is
   ignored; a blocker parked earlier in the run parks the dependent once; `--dry-run` changes nothing.
-- [ ] **Step 2: Run them, see them fail.**
-- [ ] **Step 3: Implement** a `resolve` walk in `board-pick-next` and use it in the candidate loop.
-- [ ] **Step 4: Run all board tests, see them pass.**
-- [ ] **Step 5: Commit.**
+- [x] **Step 2: Run them, see them fail.**
+- [x] **Step 3: Implement** a `resolve` walk in `board-pick-next` and use it in the candidate loop.
+- [x] **Step 4: Run all board tests, see them pass.**
+- [x] **Step 5: Commit.**
 
 ### Task 3: skill text (mechanical)
 
