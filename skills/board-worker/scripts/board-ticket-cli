@@ -10,8 +10,8 @@
 #                        [--priority Highest|High|Medium|Low|Lowest] [--type Task|Story|Bug]
 #       creates the ticket in the first status (Backlog); prints {key,url}
 #   board-ticket-cli automerge <key>
-#       ticks the "Auto merge" checkbox. For the board-issue skill after the user said yes; a BOARD-WORKER session
-#       never calls it.
+#       ticks the "Auto merge" checkbox. Only after the user said yes or told you to for that ticket (the
+#       board-issue skill, or a direct instruction in a normal session); a BOARD-WORKER session never calls it.
 #   board-ticket-cli link <key> blocked-by <blocker-key>
 #       makes <key> wait for <blocker-key> (Jira link type "Blocks"); does nothing when the link exists. For the
 #       board-issue skill; a BOARD-WORKER session never calls it.
