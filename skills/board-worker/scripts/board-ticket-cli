@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # Jira ticket CLI for the board skills; workers on any provider use it as their only Jira tool.
 # Usage:
-#   board-ticket view <key>                       one JSON object: key, summary, status, priority, component,
-#                                                 components, labels, description, autoMerge, url
-#   board-ticket status <key>                     the status name only
-#   board-ticket comment <key> <text...>          add a comment (the remaining arguments joined by a space)
-#   board-ticket label <key> add|remove <LABEL>   LABEL matches ^[A-Za-z0-9_-]{1,40}$
-#   board-ticket create --summary <s> --component <owner/repo> --description-file <f>
+#   board-ticket-cli view <key>
+#       one JSON object: key, summary, status, priority, component, components, labels, description, autoMerge, url
+#   board-ticket-cli status <key>                      the status name only
+#   board-ticket-cli comment <key> <text...>           add a comment (the remaining arguments joined by a space)
+#   board-ticket-cli label <key> add|remove <LABEL>    LABEL matches ^[A-Za-z0-9_-]{1,40}$
+#   board-ticket-cli create --summary <s> --component <owner/repo> --description-file <f>
 #                        [--priority Highest|High|Medium|Low|Lowest] [--type Task|Story|Bug]
-#                                                 creates the ticket in the first status (Backlog); prints {key,url}
-#   board-ticket automerge <key>                  ticks the "Auto merge" checkbox. For the board-issue skill after the
-#                                                 user said yes; a BOARD-WORKER session never calls it.
+#       creates the ticket in the first status (Backlog); prints {key,url}
+#   board-ticket-cli automerge <key>
+#       ticks the "Auto merge" checkbox. For the board-issue skill after the user said yes; a BOARD-WORKER session
+#       never calls it.
 # Keys may be a key (BM-123) or a browse URL on the configured site. Arguments are data: they are never executed and
 # JSON is built with jq. Exits 0 on success, 2 on bad arguments or a Jira error (one stderr line).
 set -euo pipefail
@@ -18,11 +19,11 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
 
 # Prints an error and exits 2.
-die() { echo "board-ticket: $*" >&2; exit 2; }
+die() { echo "board-ticket-cli: $*" >&2; exit 2; }
 
 # Prints the usage line and exits 2.
 usage() {
-  die "usage: board-ticket view|status|comment|label|create|automerge ... (see the header of $0)"
+  die "usage: board-ticket-cli view|status|comment|label|create|automerge ... (see the header of $0)"
 }
 
 # Prints the validated ticket key for an argument, or fails. Needs the Jira config loaded first.
@@ -36,12 +37,12 @@ automerge_field() {
   local fields matches reason=""
   fields="$(jira_api GET /rest/api/2/field)" || return 1
   matches="$(jq -r '[.[] | select(.name == "Auto merge" and .custom == true) | .id | tostring] | join("\n")' \
-    <<<"$fields")" || { echo "board-ticket: cannot parse the field list" >&2; return 1; }
+    <<<"$fields")" || { echo "board-ticket-cli: cannot parse the field list" >&2; return 1; }
   if [ -z "$matches" ]; then reason="no custom field named 'Auto merge'"
   elif [ "$(wc -l <<<"$matches")" -ne 1 ]; then reason="more than one custom field named 'Auto merge'"
   elif ! [[ "$matches" =~ ^customfield_[0-9]+$ ]]; then reason="unexpected field id: $matches"
   fi
-  if [ -n "$reason" ]; then echo "board-ticket: $reason" >&2; return 1; fi
+  if [ -n "$reason" ]; then echo "board-ticket-cli: $reason" >&2; return 1; fi
   printf '%s\n' "$matches"
 }
 

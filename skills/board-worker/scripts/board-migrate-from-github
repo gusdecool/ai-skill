@@ -177,7 +177,7 @@ migrate_card() {
   { printf 'GitHub: %s\n\n' "$url"; md_to_wiki <"$WORK/body"; } >"$WORK/desc"
 
   # Create the ticket; it starts in Backlog.
-  if ! created="$("$SCRIPTS/board-ticket" create --summary "$title" --component "$repo" \
+  if ! created="$("$SCRIPTS/board-ticket-cli" create --summary "$title" --component "$repo" \
     --description-file "$WORK/desc" --priority "$prio" 2>"$WORK/err")"; then
     report failed "fail $ref: create failed: $(reason_of "$WORK/err")"
     return 0
