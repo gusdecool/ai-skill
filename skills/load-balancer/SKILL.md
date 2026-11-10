@@ -44,20 +44,37 @@ A provider whose status is not ok, or whose quota cannot be read, is unavailable
 Pick per task, at dispatch time, at the tier the task needs (from `AGENTS.md`), with that provider's model.
 If the user pinned a provider for the task, use it and do not balance.
 
-1. **Read quotas** right before each dispatch. Each provider has a `session` (about 5 hours) and a `weekly` window, and some also a `monthly` one.
-2. **Cutoffs.** Skip a provider whose session `usedPercent` is 90 or more, or weekly or monthly is 95 or more. For
+**Run `scripts/pick-provider --reserved <your provider>` (path: next to this SKILL.md). Use its `chosen` provider.
+Never choose a provider by hand.** Why: in a real run (BM-55) the agent saw Codex under its cutoffs and dispatched to
+it without computing the urgency; by the formula OpenCode Go (about 291) beat Codex (about 213). The formula is a
+script so a model cannot shortcut it to "first provider under its cutoff".
+
+The script reads the quotas itself (`orca account list --json`), so you do not read them first, and prints JSON: every
+provider with each window's urgency, its score, whether it was skipped and why, `chosen`, and a markdown `table`.
+Options: `--reserved <claude|codex|antigravity|opencodeGo|none>` (required; your own provider), `--bump <provider>`
+(once per task already picked in this batch), `--exclude a,b` (providers with no model in the tier, for example).
+It exits 0 with a chosen provider, 1 when none is eligible (`earliestResetsAt` says when one frees up), 2 when the
+quotas cannot be read; on 2 stop and tell the user, do not guess. With a tool other than Orca, point `ORCA_BIN` at a
+command that prints the same JSON for `account list --json`.
+
+**Paste the script's `table` into the dispatch comment or the plan ledger for every dispatch.** Why: a reviewer can
+then see that the formula ran. A dispatch with no table is treated as not balanced.
+
+What the script does (the rules, kept here so you can read its output):
+
+1. **Cutoffs.** Skip a provider whose session `usedPercent` is 90 or more, or weekly or monthly is 95 or more. For
    your own (reserved) provider use 80 for session and 75 for weekly and monthly instead, so you keep quota for
-   planning, review and questions.
-3. **Urgency.** For every window of each remaining provider:
+   planning, review and questions. A provider whose status is not ok, or with no windows, is skipped.
+2. **Urgency.** For every window of each remaining provider:
    - `remaining = 100 - usedPercent`
    - `timeLeftFraction = (resetsAt - now) / (windowMinutes * 60000)`, never below 0.05
    - `urgency = remaining / timeLeftFraction`
 
    A provider's score is its highest window urgency. High means much unused quota and little time left to use it.
-   Pick the highest score.
-4. **Tie-break** when scores are within 5 percent: your own provider first, then the order the tool lists them.
-5. **Parallel tasks.** After choosing, add 5 points to that provider's session `usedPercent` in your head before
-   picking the next, so tasks spread out. Re-read the real numbers before each dispatch.
+   The highest score wins.
+3. **Tie-break** when scores are within 5 percent: your own provider first, then the order the tool lists them.
+4. **Parallel tasks.** After each pick, run the script again with one more `--bump <that provider>` (it adds 5 points to
+   that provider's session `usedPercent`), so tasks spread out. Quotas are re-read on every run.
 
 ### Worked example (caller is Claude; quotas read 2026-10-28 02:30)
 
