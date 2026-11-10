@@ -10,8 +10,8 @@
 #                        [--priority Highest|High|Medium|Low|Lowest] [--type Task|Story|Bug]
 #       creates the ticket in the first status (Backlog); prints {key,url}
 #   board-ticket-cli automerge <key>
-#       ticks the "Auto merge" checkbox. For the board-issue skill after the user said yes; a BOARD-WORKER session
-#       never calls it.
+#       ticks the "Auto merge" checkbox. Only after the user said yes or told you to for that ticket (the
+#       board-issue skill, or a direct instruction in a normal session); a BOARD-WORKER session never calls it.
 # Keys may be a key (BM-123) or a browse URL on the configured site. Arguments are data: they are never executed and
 # JSON is built with jq. Exits 0 on success, 2 on bad arguments or a Jira error (one stderr line).
 set -euo pipefail
