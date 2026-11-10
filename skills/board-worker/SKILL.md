@@ -115,6 +115,12 @@ stop (see "Stopping").
    line asking the
    human to fill it in.
 
+   **Quota check first, for every plan of any size.** Before the first product-code edit, read your own provider's
+   quota (`load-balancer` skill). If it is over its reserved cutoffs (80 session, 75 weekly), do not write product
+   code yourself, even for a one-task plan: dispatch every task to another provider and keep only planning, checks
+   and the final review. Why: a worker coded a one-task plan inline while its provider was already over the cutoff,
+   because the check was written only under the one-task bullet and never ran.
+
    **You are the orchestrator.** When the plan has two or more tasks, do not edit product code yourself: follow the
    `load-balancer` skill (tier rules, provider choice, takeover). Before the first product-code edit, load the skill,
    read quotas, and post a ticket comment beginning `Dispatch:` that names the chosen provider and model for each task.
@@ -129,9 +135,8 @@ stop (see "Stopping").
      same task to the next eligible provider at the same tier). Never answer a provider prompt such as "switch to
      another model" with "switch", and never move up to a High or Ultra model. If every provider is over a cutoff, stop
      (see Stopping) and put the earliest reset time in the comment.
-   - A plan with one task is implemented by you, inline, after `board-plan-check <ticket-key>` exits 0, only while
-     your provider is under its reserved cutoffs (80 session, 75 weekly). Over them, dispatch the task to another
-     provider like any other and keep only planning, checks and the final review for yourself: your quota is for
+   - A plan with one task is implemented by you, inline, after `board-plan-check <ticket-key>` exits 0 and the quota
+     check above shows your provider under its cutoffs. Otherwise dispatch it like any other task: your quota is for
      orchestrating and review, not for writing code.
    - Post a ticket comment at every task finish and every takeover, and at least once an hour while waiting. This
      keeps the dispatcher's 2-hour stale clock from reaping the ticket while workers run.
