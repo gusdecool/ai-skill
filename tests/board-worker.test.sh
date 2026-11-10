@@ -322,7 +322,7 @@ make_unready() {
     '200|{"fields":{"description":"","components":[{"name":"gusdecool/x"}]}}'
 }
 
-# Prints the mutating Jira steps taken on a ticket, in order, as "move label comment".
+# Prints the mutating Jira steps taken on a ticket, in order, as "move comment".
 mutations() {
   awk -v k="$1" '$1 != "GET" && $2 ~ ("/issue/" k "(/|$)") {
     w = ($2 ~ /transitions$/) ? "move" : ($2 ~ /comment$/) ? "comment" : "label"
@@ -397,12 +397,11 @@ run_pick
 assert_eq "an unready ticket is skipped for the next one" "BM-11" "$(jq -r .key <<<"$OUT")"
 assert_eq "an unready ticket gets a comment naming the gap" "1" \
   "$(comment_of BM-12 | grep -c -F 'Missing: Goal, Acceptance criteria. Moved to HITL.')"
-assert_eq "an unready ticket gets the HITL label" "1" \
-  "$(grep -c '^PUT https://x.atlassian.net/rest/api/2/issue/BM-12 {"update":{"labels":\[{"add":"HITL"}\]}}$' \
-    "$STUB_DIR/curl-calls")"
+assert_eq "an unready ticket gets no label" "0" \
+  "$(grep -c '^PUT https://x.atlassian.net/rest/api/2/issue/BM-12 {"update":{"labels"' "$STUB_DIR/curl-calls")"
 assert_eq "an unready ticket moves to HITL" "1" \
   "$(grep -c '^POST .*/issue/BM-12/transitions {"transition":{"id":"41"}}$' "$STUB_DIR/curl-calls")"
-assert_eq "parking moves, then labels, then comments" "move label comment" "$(mutations BM-12)"
+assert_eq "parking moves, then comments" "move comment" "$(mutations BM-12)"
 
 reset_board
 set_todos "BM-13|Medium|acme/y"
@@ -416,12 +415,12 @@ run_pick
 assert_eq "an unknown-repo ticket is parked and the next one is picked" "BM-21" "$(jq -r .key <<<"$OUT")"
 assert_eq "an unknown-repo ticket is parked with Component missing" "1" \
   "$(comment_of BM-20 | grep -c 'Missing: Component. Moved to HITL.')"
-assert_eq "an unknown-repo ticket parks in order" "move label comment" "$(mutations BM-20)"
+assert_eq "an unknown-repo ticket parks in order" "move comment" "$(mutations BM-20)"
 assert_eq "an unknown-repo ticket is not looked up for visibility (only BM-21 is)" "1" \
   "$(grep -c 'repo view' "$STUB_DIR/calls.log" || true)"
 set_todos "BM-22|High|bungamata"
 run_pick
-assert_eq "a component without an owner counts as unknown and is parked" "move label comment" "$(mutations BM-22)"
+assert_eq "a component without an owner counts as unknown and is parked" "move comment" "$(mutations BM-22)"
 
 reset_board
 make_unready BM-12
@@ -435,15 +434,8 @@ make_unready BM-12
 route 00-move-fail 'POST */transitions' '400|{"errorMessages":["Transition is not valid"]}'
 run_pick
 assert_eq "a failed move exits 2" "2" "$CODE"
-assert_eq "a failed move posts no comment and no label" "move" "$(mutations BM-12)"
+assert_eq "a failed move posts no comment" "move" "$(mutations BM-12)"
 assert_eq "a failed move never repeats a comment" "0" "$(jira_mentions BM-12/comment)"
-
-reset_board
-make_unready BM-12
-route 00-label-fail 'PUT */rest/api/2/issue/*' '403|{"errorMessages":["no"]}'
-run_pick
-assert_eq "a failed label exits 2" "2" "$CODE"
-assert_eq "a failed label posts no comment" "move label" "$(mutations BM-12)"
 
 reset_board
 route 00-search-fail 'GET *search/jql*' '401|{}'
@@ -699,9 +691,9 @@ run_pick
 assert_eq "all public: nothing is picked" "1" "$CODE"
 assert_eq "a public repo's ticket is commented" "1" \
   "$(comment_of BM-12 | grep -c -F "Ignored by the board worker: this repo's visibility is blocked")"
-assert_eq "a public repo's ticket gets HITL and moves, in order" "move label comment" "$(mutations BM-12)"
-assert_eq "a public repo's ticket gets the HITL label" "1" \
-  "$(grep -c '^PUT .*/issue/BM-12 {"update":{"labels":\[{"add":"HITL"}\]}}$' "$STUB_DIR/curl-calls")"
+assert_eq "a public repo's ticket moves to HITL, then is commented" "move comment" "$(mutations BM-12)"
+assert_eq "a public repo's ticket gets no label" "0" \
+  "$(grep -c '^PUT .*/issue/BM-12 {"update":{"labels"' "$STUB_DIR/curl-calls")"
 reset_board
 echo '{"visibility":"PUBLIC"}' >"$STUB_DIR/gh-repo-view"
 run_pick --dry-run
@@ -927,9 +919,9 @@ assert_eq "a 3-hour-stale ticket is reaped and frees a slot" "0" "$CODE"
 assert_eq "the stale ticket gets a comment with the 2-hour rule, last activity and last PR" "1" \
   "$(comment_of BM-20 \
     | grep -c -E 'since 2026-11-06T09:00:00Z.*2 hours.*seen: https://github.com/gusdecool/x/pull/99\.')"
-assert_eq "the stale ticket gets the HITL label" "1" \
-  "$(grep -c '^PUT .*/issue/BM-20 {"update":{"labels":\[{"add":"HITL"}\]}}$' "$STUB_DIR/curl-calls")"
-assert_eq "the stale ticket moves, labels and comments in that order" "move label comment" "$(mutations BM-20)"
+assert_eq "the stale ticket gets no label" "0" \
+  "$(grep -c '^PUT .*/issue/BM-20 {"update":{"labels"' "$STUB_DIR/curl-calls")"
+assert_eq "the stale ticket moves, then is commented" "move comment" "$(mutations BM-20)"
 assert_eq "the fresh ticket is left alone" "" "$(mutations BM-21)"
 assert_eq "the precheck never parks Todo tickets" "" "$(mutations BM-1[0-4])"
 assert_eq "the PR search is by ticket key, newest first, 100 results" "1" \
@@ -953,7 +945,7 @@ assert_eq "a +0800 time is converted: 19:30+0800 is 11:30Z, fresh" "" "$(mutatio
 precheck_board
 set_progress "BM-20|2026-11-06T17:00:00.123+0800|gusdecool/x" "BM-21|2026-11-06T06:30:00.000-0500|gusdecool/x"
 run_precheck
-assert_eq "a +0800 time is converted: 17:00+0800 is 09:00Z, stale" "move label comment" "$(mutations BM-20)"
+assert_eq "a +0800 time is converted: 17:00+0800 is 09:00Z, stale" "move comment" "$(mutations BM-20)"
 assert_eq "a -0500 time is converted: 06:30-0500 is 11:30Z, fresh" "" "$(mutations BM-21)"
 assert_eq "the offset conversion lets the precheck pass" "0" "$CODE"
 precheck_board
@@ -982,15 +974,15 @@ precheck_board
 set_progress "BM-20|2026-11-06T17:00:00.000+0800|gusdecool/x" "BM-21|2026-11-06T16:00:00.000+0800|gusdecool/x"
 run_precheck
 assert_eq "both stale tickets are reaped, so the precheck passes" "0" "$CODE"
-assert_eq "the status move happens before the comment" "move label comment" "$(mutations BM-20)"
-assert_eq "the second stale ticket is reaped too" "move label comment" "$(mutations BM-21)"
+assert_eq "the status move happens before the comment" "move comment" "$(mutations BM-20)"
+assert_eq "the second stale ticket is reaped too" "move comment" "$(mutations BM-21)"
 
 precheck_board
 set_progress "BM-20|2026-11-06T17:00:00.000+0800|gusdecool/x" "BM-21|2026-11-06T17:00:00.000+0800|gusdecool/x"
 route 00-comment-fail 'POST */comment' '500|{}'
 run_precheck
 assert_eq "a failing reap exits 2" "2" "$CODE"
-assert_eq "a failing reap still tries the next ticket" "move label comment" "$(mutations BM-21)"
+assert_eq "a failing reap still tries the next ticket" "move comment" "$(mutations BM-21)"
 assert_eq "a failing reap names the failed tickets" "2" "$(grep -o 'BM-2[01]' <<<"$ERR" | sort -u | wc -l | tr -d ' ')"
 
 precheck_board

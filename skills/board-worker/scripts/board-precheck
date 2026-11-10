@@ -4,8 +4,8 @@
 # Exits 0 only when a pick-able Todo ticket exists, fewer than 2 tickets are In progress (after reaping stale ones)
 # and pick-provider --orchestrator exits 0 (claude, the orchestrator, has quota). Otherwise exits 1 with one line on
 # stderr naming the failed condition; 2 on a Jira or script failure.
-# Reaper: an In progress ticket with no ticket or linked PR activity for 2 hours gets the HITL label, moves to HITL
-# and gets a comment with the last activity time, the 2-hour rule and the last PR seen.
+# Reaper: an In progress ticket with no ticket or linked PR activity for 2 hours moves to HITL and
+# gets a comment with the last activity time, the 2-hour rule and the last PR seen.
 # Activity is read per ticket: the Jira `updated` field and `gh pr list --search "<KEY>"` (PRs that mention it).
 # Env: PICK_PROVIDER (path of pick-provider), NOW_EPOCH (clock in seconds, for tests).
 set -euo pipefail
@@ -52,16 +52,14 @@ last_activity() {
     | "\($latest) \($latest | todate) \($pr.url // "none")"'
 }
 
-# Moves a stale ticket to HITL, then labels HITL, then comments why. Args: key, last-time, last-pr.
+# Moves a stale ticket to HITL, then comments why. Args: key, last-time, last-pr.
 # The move comes first so a half-done reap still frees the slot; the comment last, as it bumps the update time.
 # Returns 1 with a message when a step fails.
 reap_ticket() {
   local body
   "$dir/board-set-status" "$1" HITL 2>/dev/null || { echo "cannot move $1 to HITL" >&2; return 1; }
-  jira_api PUT "/rest/api/2/issue/$1" '{"update":{"labels":[{"add":"HITL"}]}}' >/dev/null 2>&1 \
-    || { echo "cannot label $1" >&2; return 1; }
   body="$(jq -nc --arg t "No activity since $2 (no ticket or PR update for 2 hours, the board worker rule), \
-so this ticket was moved to the HITL column with the HITL label. Last PR seen: $3." '{body: $t}')" \
+so this ticket was moved to the HITL column. Last PR seen: $3." '{body: $t}')" \
     || { echo "cannot build the comment for $1" >&2; return 1; }
   jira_api POST "/rest/api/2/issue/$1/comment" "$body" >/dev/null 2>&1 \
     || { echo "cannot comment on $1" >&2; return 1; }

@@ -3,7 +3,7 @@
 # Usage: board-migrate-from-github --owner <org> --project <number> [--apply] [--limit <n>]
 # A card is migrated when it is an Issue, not Done, in an allowed owner's repo, and has no "Moved to Jira:" comment.
 # Each migrated card gets a Jira ticket (component = repo, priority mapped, description = GitHub link + the body
-# converted to wiki markup), the matching status (In progress becomes HITL plus the HITL label) and a
+# converted to wiki markup), the matching status (In progress becomes HITL) and a
 # "Moved to Jira: <url>" comment on the GitHub issue, which stays open. "Auto merge: true" is never carried over.
 # Output: one line per card (would migrate / migrated / skip / fail) and a summary. Exits 0, 1 when a card failed,
 # 2 on a usage error or when the board cannot be read.
@@ -120,7 +120,7 @@ reason_of() {
 
 # Migrates one board item given as JSON: applies the filters, then plans (dry run) or performs the migration.
 migrate_card() {
-  local item="$1" type status priority repo number url title labels target prio ref
+  local item="$1" type status priority repo number url title target prio ref
   local key="" browse="" created note="" errs="" err
   type="$(jq -r '.content.type // ""' <<<"$item")"
   repo="$(jq -r '.content.repository // ""' <<<"$item")"
@@ -189,15 +189,10 @@ migrate_card() {
     return 0
   fi
 
-  # Status, label and the GitHub comment: a failure is remembered, the other steps still run.
+  # Status and the GitHub comment: a failure is remembered, the other steps still run.
   if [ "$target" != "Backlog" ]; then
     "$SCRIPTS/board-set-status" "$key" "$target" 2>"$WORK/err" >/dev/null \
       || errs="$errs; status $target failed: $(reason_of "$WORK/err")"
-  fi
-  labels="$(jq -r '(.labels // [])[]' <<<"$item" 2>/dev/null)" || labels=""
-  if [ "$status" = "In progress" ] || grep -qx 'HITL' <<<"$labels"; then
-    "$SCRIPTS/board-ticket" label "$key" add HITL 2>"$WORK/err" >/dev/null \
-      || errs="$errs; label HITL failed: $(reason_of "$WORK/err")"
   fi
   gh issue comment "$url" --body "Moved to Jira: $browse" 2>"$WORK/err" >/dev/null \
     || errs="$errs; GitHub comment failed: $(reason_of "$WORK/err")"

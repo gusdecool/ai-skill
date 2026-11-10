@@ -22,6 +22,10 @@ for script in skills/*/scripts/*; do
   [ -x "$script" ] || fail "$script is not executable"
 done
 
+# The HITL status is the only stop marker; the label HITL must not come back, and a high-risk change gets high-risk.
+grep -q 'add high-risk' skills/board-worker/SKILL.md || fail "board-worker SKILL.md does not add the high-risk label"
+if grep -q 'add HITL' skills/board-worker/SKILL.md; then fail "board-worker SKILL.md adds the HITL label"; fi
+
 for json in .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-plugin/plugin.json \
   .agents/plugins/marketplace.json; do
   jq -e . "$json" >/dev/null 2>&1 || fail "$json is not valid JSON"
