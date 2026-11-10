@@ -67,7 +67,7 @@ If the user pinned a provider for the task, use it and do not balance.
 Claude is skipped because its weekly 81% is over its reserved 75% cutoff. Picks go codex (141), then antigravity (118)
 once Codex's session numbers shift. If the caller were Codex, the same rule would reserve Codex instead.
 
-If every provider is over a cutoff or unavailable, stop and tell the user the earliest `resetsAt`.
+If every provider is over a cutoff or unavailable, do not dispatch. Follow "Waiting for a quota reset" below.
 
 ## Dispatching
 
@@ -105,6 +105,28 @@ as a stall. On a flag:
 3. Pick the next eligible provider by the rules above and give it the same task from the plan file, at the same tier
    (Workhorse stays Workhorse). Note in the ledger that the task changed provider and why. Never move up to a
    top-tier model to make up for a limit.
+
+## Waiting for a quota reset
+
+Use this when every provider is over a cutoff, or workers stopped on a usage limit and no provider is eligible.
+It is a limit that lifts on its own, so ask once, never loop silently.
+
+1. **Ask the user once**, with the real earliest `resetsAt` (as a local clock time) and these options, recommended
+   first: (1) local watcher: you re-read the quotas every 5 minutes and resume by yourself, good for a short wait but
+   it stops if the computer sleeps; (2) scheduled cloud agent, which survives sleep but cannot reach local worktrees or
+   databases, so it only suits Jira and merge steps; (3) wait idle in the session. After the answer, resume the work
+   alone with no further check-in.
+2. **Leave running workers alone** while the quota still shows room. Do not stop a worker only because its provider is
+   near the cutoff; it may finish. A worker that reports `worker_done` with outcome failed and "usage limit" in its
+   summary stopped cleanly: its work is committed locally as WIP, nothing is pushed.
+3. **Watcher (option 1).** Re-read the quotas every 5 minutes (a scheduled wakeup or loop, whatever the host offers).
+   Resume when any provider is under its cutoffs again. Each tick: read quotas, flag stalled workers by the rules
+   above, otherwise do nothing.
+4. **Resume in place.** Send each stopped worker a follow-up on its own dispatch (in Orca: `orchestration send --to
+   dispatch:<id>`, which reopens it) that says: the limit has reset, continue from the WIP commit, finish the listed
+   remaining steps. Check `git log` and `git status` in its worktree first. If the same provider is still over its
+   cutoff, hand the task to the next eligible provider through the plan file instead.
+5. **Never switch tiers** to get around the wait (no top-tier model, no model missing from the table).
 
 ## Releasing workers
 
