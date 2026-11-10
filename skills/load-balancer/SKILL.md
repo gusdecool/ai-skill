@@ -1,6 +1,6 @@
 ---
 name: load-balancer
-description: Use when the user says "use load balancer", when a written plan has about four or more tasks, or when you are about to dispatch implementation tasks to workers on other AI providers (Claude, Codex, Antigravity and so on). Spreads the tasks across providers by remaining quota so none runs out and none goes unused. Works from any agent; the agent that calls it is the orchestrator.
+description: Use when the user says "use load balancer", when a written plan has about four or more tasks, or when you are about to dispatch implementation tasks to workers on other AI providers (Claude, Codex, Antigravity, OpenCode Go and so on). Spreads the tasks across providers by remaining quota so none runs out and none goes unused. Works from any agent; the agent that calls it is the orchestrator.
 ---
 
 # Load balancer
@@ -44,9 +44,10 @@ A provider whose status is not ok, or whose quota cannot be read, is unavailable
 Pick per task, at dispatch time, at the tier the task needs (from `AGENTS.md`), with that provider's model.
 If the user pinned a provider for the task, use it and do not balance.
 
-1. **Read quotas** right before each dispatch. Each provider has a `session` (about 5 hours) and a `weekly` window.
-2. **Cutoffs.** Skip a provider whose session `usedPercent` is 90 or more, or weekly is 95 or more. For your own
-   (reserved) provider use 80 and 75 instead, so you keep quota for planning, review and questions.
+1. **Read quotas** right before each dispatch. Each provider has a `session` (about 5 hours) and a `weekly` window, and some also a `monthly` one.
+2. **Cutoffs.** Skip a provider whose session `usedPercent` is 90 or more, or weekly or monthly is 95 or more. For
+   your own (reserved) provider use 80 for session and 75 for weekly and monthly instead, so you keep quota for
+   planning, review and questions.
 3. **Urgency.** For every window of each remaining provider:
    - `remaining = 100 - usedPercent`
    - `timeLeftFraction = (resetsAt - now) / (windowMinutes * 60000)`, never below 0.05
@@ -145,14 +146,19 @@ watch is needed for that; the stuck-worker watch above still is. A session that 
 first.
 
 - **Quotas:** `orca account list --json`, field `result.rateLimits`. Providers: `claude`, `codex`, `antigravity`
-  (its bucket named "Gemini Models" is the Gemini quota). Each has `session` and `weekly` with `usedPercent`,
-  `windowMinutes`, `resetsAt`. A provider whose `status` is not `ok` is unavailable.
-- **Launch:** `orca agent launch --agent <claude|codex> --worktree <selector> --prompt <text>`. Gemini runs through
-  the Antigravity CLI (`agy`). For orchestrated workers use `orca orchestration worker-start` with `--model` set
+  (its bucket named "Gemini Models" is the Gemini quota), `opencodeGo` (OpenCode Go). Each has `session` and `weekly`,
+  and `opencodeGo` also `monthly`, with `usedPercent`, `windowMinutes`, `resetsAt`. A provider whose `status` is not
+  `ok` is unavailable; `opencodeGo` reports `missing-credentials` until its API key is set in Orca settings.
+- **Launch:** `orca agent launch --agent <claude|codex|opencode> --worktree <selector> --prompt <text>`. Gemini runs
+  through the Antigravity CLI (`agy`). For orchestrated workers use `orca orchestration worker-start` with `--model` set
   explicitly and `--worktree current`.
 - **Codex model slugs:** `--model` takes the slugs in `~/.codex/models_cache.json`, not display names. Before
   dispatching, take the visible (`visibility: list`) slug for the tier's model family (Sol, Luna) with the highest
   version. If it is newer than what `AGENTS.md` names, use the newer one.
+- **OpenCode Go models:** `--agent opencode --model opencode-go/<model>` (DeepSeek V4.1 Flash and V4 Pro; take the
+  slugs from the API model IDs in `models.md`). The account must have its region set to Global in the OpenCode
+  console, or DeepSeek calls fail with "This Go model is hosted outside Europe and the United States". That setting
+  moves processing outside the EU and US: only the user changes it.
 - **Read, stop:** `orca orchestration worker-read`, `orca orchestration worker-stop --dispatch <id>`.
 - **Watch:** `~/.agents/skills/board-worker/scripts/board-watch <dispatch>:<provider> ...` does the 10-minute watch
   above without a model (`worker-show` reports `waitingOnHuman`, `worker-read` gives the screen). It exits on the first
