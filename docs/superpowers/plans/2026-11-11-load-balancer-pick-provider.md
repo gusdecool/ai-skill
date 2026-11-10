@@ -12,4 +12,4 @@ Spec: `docs/superpowers/specs/2026-11-11-load-balancer-pick-provider-design.md`
 - [x] board-worker SKILL.md step 4: the `Dispatch:` comment includes the score table
 ### Task 4: Verify and open the PR (mechanical)
 - [x] Run all tests and `tests/check-structure.sh`
-- [ ] Open the PR (do not merge)
+- [x] Open the PR (do not merge)
