@@ -5,7 +5,7 @@
 # Order: Priority (Highest, High, Medium, Low, Lowest, none), then lowest ticket number (oldest).
 # The repo of a ticket is its single component, named owner/repo. A ticket of a repo whose owner is not allowed is
 # ignored untouched; a ticket with no valid component stays a candidate so the readiness check parks it.
-# A Todo ticket that is not ready moves to HITL, then gets the HITL label and a comment naming what is missing.
+# A Todo ticket that is not ready moves to HITL, then gets a comment naming what is missing.
 # --dry-run only skips unready tickets: it never comments, labels or moves anything.
 set -euo pipefail
 
@@ -31,12 +31,11 @@ sorted_candidates() {
     | .[] | {key, repo}' <<<"$1"
 }
 
-# Moves a ticket the worker will not take to HITL, then labels and comments on it. Args: key, reason.
+# Moves a ticket the worker will not take to HITL, then comments on it. Args: key, reason.
 # The move comes first so a failed move cannot repeat the comment on every tick.
 park_ticket() {
   local body
   "$dir/board-set-status" "$1" HITL || die "cannot park $1"
-  jira_api PUT "/rest/api/2/issue/$1" '{"update":{"labels":[{"add":"HITL"}]}}' >/dev/null || die "cannot park $1"
   body="$(jq -nc --arg t "$2 Moved to HITL." '{body: $t}')" || die "cannot park $1"
   jira_api POST "/rest/api/2/issue/$1/comment" "$body" >/dev/null || die "cannot park $1"
 }

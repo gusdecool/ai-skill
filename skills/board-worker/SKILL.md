@@ -78,7 +78,7 @@ stop (see "Stopping").
 ## Steps
 
 1. **Read.** Read the ticket (`board-ticket view <key>`), the repo README (the `## UAT` section) and
-   `AGENTS.md`/`CLAUDE.md`. If the ticket has the label `HITL`, remove it: `board-ticket label <key> remove HITL`.
+   `AGENTS.md`/`CLAUDE.md`. If the ticket has the label `high-risk`, remove it: `board-ticket label <key> remove high-risk`.
    Then immediately post a comment "Board worker started <ISO time>" (`board-ticket comment <key> <text>`). This
    touches the ticket, which resets the dispatcher's 2-hour stale clock; changing the status alone does not.
 2. **Check the spec.** Run `board-check-ready <ticket-key>`. If it exits 1, post a comment naming the missing
@@ -118,7 +118,7 @@ stop (see "Stopping").
 5. **Risk check.** The change is high-risk if the diff touches any of: a database schema or migration, API design,
    payments, authentication, data isolation, infrastructure apply.
    If high-risk: before merging, post a ticket comment saying what is risky, the files and lines, and a link to the
-   spec and plan in the PR. Add the label `HITL`: `board-ticket label <key> add HITL`. Then continue to merge.
+   spec and plan in the PR. Add the label `high-risk`: `board-ticket label <key> add high-risk`. Then continue to merge.
 6. **CI.** Run `gh pr checks <pr> --watch`. On failure, read the log (`gh run view <run-id> --log-failed`), fix on the
    same branch, push, watch again. Never weaken a test, lint rule or coverage threshold.
    After 3 failed rounds, stop (see Stopping).
@@ -145,8 +145,8 @@ stop (see "Stopping").
    - `UAT: unknown` or no section: skip the watch. The final comment says the repo has no known UAT, so QA does not
      mean "already on UAT".
 9. **Finish.** Move the ticket: `board-set-status <ticket-key> QA`. Post a ticket comment with the PR link, the UAT
-   result, and anything you could not verify. For a high-risk change the `HITL` label stays and the ticket still goes
-   to QA.
+   result, and anything you could not verify. For a high-risk change the `high-risk` label stays and the ticket still
+   goes to QA.
 
 ## Stopping
 
@@ -159,8 +159,7 @@ check and posts that comment; a worker that meets it makes the same stop with th
 Every stop does all of these:
 
 1. Post a ticket comment with the reason (and the failing log line, if any): `board-ticket comment <key> <text>`.
-2. Add the label `HITL`: `board-ticket label <key> add HITL`.
-3. Run `board-set-status <ticket-key> HITL`. HITL is the status for started tickets that need the user;
-   Backlog is only for ideas not yet queued.
-4. End the session. Do not merge a PR that stopped on CI. For a failed UAT deploy the merge already happened, so say
+2. Run `board-set-status <ticket-key> HITL`. HITL is the status for started tickets that need the user; it is the
+   only marker (no label). Backlog is only for ideas not yet queued.
+3. End the session. Do not merge a PR that stopped on CI. For a failed UAT deploy the merge already happened, so say
    so in the comment.

@@ -107,8 +107,8 @@ run --owner bungamata --project 9 --limit 7
 assert_has "--limit is passed to gh" "--limit 7" "$(cat "$STUB_DIR/gh-args")"
 
 echo "apply: status handling"
-# Each row: status|labels JSON|priority|expected status|expected transition id ("" for none)|expect label (yes|no)
-while IFS='|' read -r st labels prio want tid lab; do
+# Each row: status|labels JSON|priority|expected status|expected transition id ("" for none)
+while IFS='|' read -r st labels prio want tid; do
   reset
   board "$(item 10 $BOARD "$st" "$prio" Issue 'T' 'body' "$labels")"
   run --owner bungamata --project 9 --apply
@@ -121,19 +121,14 @@ summary: 1 migrated, 0 skipped, 0 failed" "$OUT"
   else
     assert_eq "[$st] no transition" "0" "$(count '/transitions' "$STUB_DIR/curl-calls")"
   fi
-  want_label="PUT $SITE/issue/BM-100 {\"update\":{\"labels\":[{\"add\":\"HITL\"}]}}"
-  if [ "$lab" = yes ]; then
-    assert_eq "[$st] HITL label added" "$want_label" "$(grep -E '^PUT ' "$STUB_DIR/curl-calls" || true)"
-  else
-    assert_eq "[$st] no label" "0" "$(count '^PUT ' "$STUB_DIR/curl-calls")"
-  fi
+  assert_eq "[$st] no label is added" "0" "$(count '^PUT ' "$STUB_DIR/curl-calls")"
 done <<'ROWS'
-Todo|[]|High|Todo|11|no
-QA|[]|Low|QA|12|no
-HITL|["HITL"]|Medium|HITL|13|yes
-Backlog|[]|Urgent|Backlog||no
-In progress|[]||HITL|13|yes
-Todo|["bug","HITL"]|High|Todo|11|yes
+Todo|[]|High|Todo|11
+QA|[]|Low|QA|12
+HITL|["HITL"]|Medium|HITL|13
+Backlog|[]|Urgent|Backlog|
+In progress|[]||HITL|13
+Todo|["bug","HITL"]|High|Todo|11
 ROWS
 
 echo "apply: creation, comment and conversion"
