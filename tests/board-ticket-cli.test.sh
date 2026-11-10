@@ -208,5 +208,46 @@ assert_eq "a Jira error exits 2" "2" "$CODE"
 assert_eq "the token is never printed" "0" "$(grep -c 'FAKE-TOKEN' <<<"$OUT$ERR")"
 assert_eq "the token is not in the curl arguments" "0" "$(grep -c 'FAKE-TOKEN' "$STUB_DIR/curl-argv")"
 
+echo "blockers and link"
+LINKS='{"fields":{"issuelinks":['
+LINKS+='{"type":{"name":"Blocks"},"inwardIssue":{"key":"BM-1","fields":{"status":{"name":"QA"}}}},'
+LINKS+='{"type":{"name":"Blocks"},"inwardIssue":{"key":"BM-2","fields":{"status":{"name":"Todo"}}}},'
+LINKS+='{"type":{"name":"Blocks"},"inwardIssue":{"key":"BM-4","fields":{"status":{"name":"Done"}}}},'
+LINKS+='{"type":{"name":"Blocks"},"outwardIssue":{"key":"BM-9","fields":{"status":{"name":"Todo"}}}},'
+LINKS+='{"type":{"name":"Relates"},"inwardIssue":{"key":"BM-3","fields":{"status":{"name":"Backlog"}}}}]}}'
+reset_curl "200|$LINKS"
+run blockers BM-5
+assert_eq "blockers exits 0" "0" "$CODE"
+assert_eq "blockers lists only the Blocks links where the ticket is blocked, with finished for QA and Done" \
+  '[{"key":"BM-1","status":"QA","finished":true},{"key":"BM-2","status":"Todo","finished":false},'\
+'{"key":"BM-4","status":"Done","finished":true}]' "$OUT"
+reset_curl '200|{"fields":{"issuelinks":[]}}'
+run blockers BM-5
+assert_eq "blockers of a ticket with no links is an empty array" "[]" "$OUT"
+run blockers
+assert_eq "blockers without a key exits 2" "2" "$CODE"
+
+reset_curl '200|{"fields":{"issuelinks":[]}}' '201|'
+run link BM-5 blocked-by BM-2
+assert_eq "link exits 0" "0" "$CODE"
+assert_eq "link posts a Blocks link: the blocker is the outward issue" \
+  '{"type":{"name":"Blocks"},"outwardIssue":{"key":"BM-2"},"inwardIssue":{"key":"BM-5"}}' \
+  "$(jq -c . "$STUB_DIR/curl-body")"
+assert_eq "link posts to the issueLink endpoint" "1" \
+  "$(grep -c '^POST https://x.atlassian.net/rest/api/2/issueLink ' "$STUB_DIR/curl-calls")"
+reset_curl "200|$LINKS"
+run link BM-5 blocked-by BM-2
+assert_eq "link does nothing when the link already exists" "0 1" "$CODE $(ncalls)"
+reset_curl
+run link BM-5 blocked-by BM-5
+assert_eq "link to itself exits 2 with no call" "2 0" "$CODE $(ncalls)"
+run link BM-5 blocks BM-2
+assert_eq "link with another word than blocked-by exits 2 with no call" "2 0" "$CODE $(ncalls)"
+run link BM-5 blocked-by nope
+assert_eq "link with a bad blocker key exits 2 with no call" "2 0" "$CODE $(ncalls)"
+reset_curl '200|{"fields":{"issuelinks":[]}}' '400|{"errorMessages":["no"]}'
+run link BM-5 blocked-by BM-2
+assert_eq "a Jira error while linking exits 2" "2" "$CODE"
+
 if [ "$FAILS" -eq 0 ]; then echo "All board-ticket-cli tests passed"; fi
 exit "$FAILS"

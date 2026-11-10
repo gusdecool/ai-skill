@@ -284,15 +284,30 @@ route() {
 }
 
 READY_DESC=$'## Goal\nX\n\n## Done when\nY\n'
-# Replaces the Todo tickets of the fake Jira board. Each argument is "KEY|Priority|component", the last two may be
-# empty. Every ticket also gets a ready-check route (a ready description) with its component.
+# Replaces the Todo tickets of the fake Jira board. Each argument is "KEY|Priority|component|links", the last three may
+# be empty. links is a comma list of "BLOCKER:Status" (a Blocks link where the ticket is blocked), "rel:KEY:Status" (a
+# Relates link) or "out:KEY:Status" (a Blocks link where the ticket is the blocker). Every ticket also gets a
+# ready-check route (a ready description) with its component.
 set_todos() {
-  local spec key prio comp issues="[]"
+  local spec key prio comp links issues="[]" link a b c
   for spec in "$@"; do
-    IFS='|' read -r key prio comp <<<"$spec"
-    issues="$(jq -c --arg k "$key" --arg p "$prio" --arg c "$comp" \
+    IFS='|' read -r key prio comp links <<<"$spec"
+    local il="[]"
+    while IFS= read -r link; do
+      [ -n "$link" ] || continue
+      IFS=: read -r a b c <<<"$link"
+      case "$a" in
+        rel) il="$(jq -c --arg k "$b" --arg s "$c" '. + [{type: {name: "Relates"},
+          inwardIssue: {key: $k, fields: {status: {name: $s}}}}]' <<<"$il")" ;;
+        out) il="$(jq -c --arg k "$b" --arg s "$c" '. + [{type: {name: "Blocks"},
+          outwardIssue: {key: $k, fields: {status: {name: $s}}}}]' <<<"$il")" ;;
+        *) il="$(jq -c --arg k "$a" --arg s "$b" '. + [{type: {name: "Blocks"},
+          inwardIssue: {key: $k, fields: {status: {name: $s}}}}]' <<<"$il")" ;;
+      esac
+    done < <(tr ',' '\n' <<<"$links")
+    issues="$(jq -c --arg k "$key" --arg p "$prio" --arg c "$comp" --argjson il "$il" \
       '. + [{key: $k, fields: {priority: (if $p == "" then null else {name: $p} end),
-        components: (if $c == "" then [] else [{name: $c}] end)}}]' <<<"$issues")"
+        components: (if $c == "" then [] else [{name: $c}] end), issuelinks: $il}}]' <<<"$issues")"
     route "50-ready-$key" "GET */rest/api/2/issue/$key\\?fields=description,components" \
       "200|$(jq -cn --arg d "$READY_DESC" --arg c "$comp" \
         '{fields: {description: $d, components: (if $c == "" then [] else [{name: $c}] end)}}')"
@@ -448,6 +463,68 @@ assert_eq "an unreadable ticket is skipped" "BM-11" "$(jq -r .key <<<"$OUT")"
 assert_eq "an unreadable ticket is named on stderr" "1" "$(grep -c 'skipping BM-12, cannot read it' <<<"$ERR")"
 assert_eq "an unreadable ticket is left alone" "" "$(mutations BM-12)"
 
+echo "Pick next with dependencies"
+X=gusdecool/x
+reset_board
+set_todos "BM-20|Highest|$X|BM-21:Todo" "BM-21|Low|$X"
+run_pick
+assert_eq "a Todo blocker is picked before its dependent" "BM-21" "$(jq -r .key <<<"$OUT")"
+assert_eq "picking the blocker changes nothing" "0" "$(mutation_count)"
+set_todos "BM-30|Highest|$X|BM-31:Todo" "BM-31|High|$X|BM-32:Todo" "BM-32|Low|$X"
+run_pick
+assert_eq "a chain of Todo blockers is walked to the first one" "BM-32" "$(jq -r .key <<<"$OUT")"
+set_todos "BM-60|Highest|$X|BM-61:QA,BM-62:Done"
+run_pick
+assert_eq "blockers in QA and Done do not block" "BM-60" "$(jq -r .key <<<"$OUT")"
+set_todos "BM-90|Highest|$X|rel:BM-91:Backlog,out:BM-92:Backlog"
+run_pick
+assert_eq "a Relates link and a Blocks link from the other side are ignored" "BM-90" "$(jq -r .key <<<"$OUT")"
+
+reset_board
+set_todos "BM-40|Highest|$X|BM-41:In progress" "BM-42|Low|$X"
+run_pick
+assert_eq "a dependent of an In progress ticket is skipped for the next one" "BM-42" "$(jq -r .key <<<"$OUT")"
+assert_eq "an In progress blocker leaves the dependent untouched" "" "$(mutations BM-40)"
+
+reset_board
+set_todos "BM-50|Highest|$X|BM-51:Backlog" "BM-52|Low|$X"
+run_pick
+assert_eq "a dependent of a Backlog ticket is skipped for the next one" "BM-52" "$(jq -r .key <<<"$OUT")"
+assert_eq "a dependent of a Backlog ticket is parked: move, then comment" "move comment" "$(mutations BM-50)"
+assert_eq "the comment names the blocker and its status" "1" \
+  "$(comment_of BM-50 | grep -c -F 'Blocked by BM-51 (Backlog)')"
+assert_eq "the comment says the ticket moved to HITL" "1" "$(comment_of BM-50 | grep -c -F 'Moved to HITL.')"
+set_todos "BM-50|Highest|$X|BM-51:HITL,BM-53:Todo" "BM-53|Low|$X"
+run_pick
+assert_eq "a HITL blocker parks the dependent even when another blocker is Todo" "1" \
+  "$(comment_of BM-50 | grep -c -F 'BM-51 (HITL)')"
+run_pick --dry-run
+assert_eq "dry-run skips a blocked ticket without changing anything" "BM-53 0" \
+  "$(jq -r .key <<<"$OUT") $(mutation_count)"
+
+reset_board
+set_todos "BM-70|Highest|$X|BM-71:Todo" "BM-71|High|$X|BM-70:Todo" "BM-72|Low|$X"
+run_pick
+assert_eq "a dependency cycle is skipped for the next ticket" "BM-72" "$(jq -r .key <<<"$OUT")"
+assert_eq "both tickets of a cycle are parked once" "move comment|move comment" \
+  "$(mutations BM-70)|$(mutations BM-71)"
+assert_eq "the cycle comment shows the cycle" "1" "$(comment_of BM-70 | grep -c -F 'cycle: BM-70 -> BM-71 -> BM-70')"
+
+reset_board
+set_todos "BM-80|Highest|$X|BM-81:Todo" "BM-81|High|acme/y" "BM-82|Low|$X"
+run_pick
+assert_eq "a Todo blocker of a not-allowed owner parks the dependent" "BM-82 move-comment" \
+  "$(jq -r .key <<<"$OUT") $(mutations BM-80 | tr ' ' '-')"
+assert_eq "the not-allowed blocker is left untouched" "" "$(mutations BM-81)"
+
+reset_board
+set_todos "BM-100|Highest|$X|BM-101:Todo" "BM-101|High|$X" "BM-102|Low|$X"
+make_unready BM-101
+run_pick
+assert_eq "an unready blocker is parked and then its dependent is parked once" \
+  "BM-102|move comment|move comment" "$(jq -r .key <<<"$OUT")|$(mutations BM-101)|$(mutations BM-100)"
+assert_eq "the dependent's comment names the parked blocker" "1" "$(comment_of BM-100 | grep -c -F 'BM-101 (HITL)')"
+
 echo "Set status"
 TRANSITIONS='{"transitions":[{"id":"11","name":"Start","to":{"name":"In progress"}},'
 TRANSITIONS+='{"id":"31","name":"Finish","to":{"name":"Done"}}]}'
@@ -521,7 +598,7 @@ tweak_accounts() { jq "$1" "$FIX/accounts.json" >"$STUB_DIR/accounts.json"; }
 OUT="$(run_provider "$FIX/accounts.json")"
 CODE=$?
 assert_eq "worked example picks codex" \
-  '{"provider":"codex","model":"gpt-6.1-sol","tier":"workhorse"}' "$(jq -c . <<<"$OUT")"
+  '{"provider":"codex","model":"gpt-6.1-sol","tier":"Mid"}' "$(jq -c . <<<"$OUT")"
 assert_eq "worked example exits 0" "0" "$CODE"
 
 tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rateLimits.claude.session.usedPercent = 5
@@ -565,12 +642,62 @@ OUT="$(run_provider "$STUB_DIR/accounts.json" --orchestrator)"
 CODE=$?
 assert_eq "--orchestrator picks claude even when codex scores higher" "claude 0" "$(jq -r .provider <<<"$OUT") $CODE"
 
-tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rateLimits.claude.session.usedPercent = 80
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 77 | .result.rateLimits.claude.session.usedPercent = 85'
+OUT="$(run_provider "$STUB_DIR/accounts.json" --orchestrator)"
+CODE=$?
+assert_eq "--orchestrator allows claude over the reserved cutoffs" "claude 0" "$(jq -r .provider <<<"$OUT") $CODE"
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+assert_eq "without the flag claude over the reserved cutoffs is not a worker" "codex" "$(jq -r .provider <<<"$OUT")"
+
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 90 | .result.rateLimits.claude.session.usedPercent = 10
   | .result.rateLimits.codex.session.usedPercent = 1'
 OUT="$(run_provider "$STUB_DIR/accounts.json" --orchestrator)"
 CODE=$?
-assert_eq "--orchestrator exits 1 when claude is over its reserved cutoff" "1" "$CODE"
+assert_eq "--orchestrator exits 1 when claude reaches 90 weekly" "1" "$CODE"
 assert_eq "--orchestrator names the error" "1" "$(jq -r 'has("error") | if . then 1 else 0 end' <<<"$OUT")"
+
+OPENCODE='{"provider":"opencode-go","status":"ok",
+  "session":{"usedPercent":0,"windowMinutes":300,"resetsAt":1000010000000},
+  "weekly":{"usedPercent":0,"windowMinutes":10080,"resetsAt":1000500000000},
+  "monthly":{"usedPercent":0,"windowMinutes":43200,"resetsAt":1002000000000}}'
+tweak_accounts ".result.rateLimits.opencodeGo = $OPENCODE | .result.rateLimits.claude.status = \"error\"
+  | .result.rateLimits.codex.status = \"error\"
+  | .result.rateLimits.antigravity.status = \"error\""
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+assert_eq "opencode go can be picked with its DeepSeek model" \
+  '{"provider":"opencode","model":"opencode-go/deepseek-v4-pro","tier":"Mid"}' "$(jq -c . <<<"$OUT")"
+
+tweak_accounts ".result.rateLimits.opencodeGo = $OPENCODE | .result.rateLimits.opencodeGo.monthly.usedPercent = 95
+  | .result.rateLimits.claude.status = \"error\" | .result.rateLimits.codex.status = \"error\"
+  | .result.rateLimits.antigravity.status = \"error\""
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+CODE=$?
+assert_eq "opencode go over its monthly cutoff is skipped" "1" "$CODE"
+
+cat >"$STUB_DIR/models.md" <<'MD'
+| Provider | Low | Mid | High | Ultra |
+|---|---|---|---|---|
+| Claude | Haiku 5.5 | Sonnet 5.5 | none | none |
+| Codex | Luna | Sol | none | none |
+| Gemini | 3.5 Flash-Lite | 3.8 Flash | none | none |
+MD
+OUT="$(MODELS_FILE="$STUB_DIR/models.md" run_provider "$FIX/accounts.json" --tier High)"
+CODE=$?
+assert_eq "a tier no provider has exits 1" "1" "$CODE"
+ERR="$(MODELS_FILE="$STUB_DIR/models.md" ACCOUNTS_FIXTURE="$FIX/accounts.json" ORCA_BIN="$STUB_DIR/orca" \
+  CODEX_MODELS_CACHE="$STUB_DIR/codex-models.json" NOW_MS=1000000000000 bash "$PICKPROV" --tier High 2>&1 >/dev/null)"
+assert_eq "the refusal names provider and tier" "1" \
+  "$(grep -c 'codex has no High model' <<<"$ERR" | grep -q '^1$' && echo 1 || echo 0)"
+OUT="$(MODELS_FILE="$STUB_DIR/models.md" run_provider "$FIX/accounts.json" --tier Mid)"
+CODE=$?
+assert_eq "tier Mid still works with the table" "codex Mid 0" "$(jq -r '.provider + " " + .tier' <<<"$OUT") $CODE"
+OUT="$(MODELS_FILE="$STUB_DIR/models.md" run_provider "$FIX/accounts.json" --tier workhorse)"
+CODE=$?
+assert_eq "an old tier name is refused" "2" "$CODE"
+sed -i.bak 's/| none | none |$/| Opus 5.5 | none |/;' "$STUB_DIR/models.md"
+OUT="$(MODELS_FILE="$STUB_DIR/models.md" run_provider "$FIX/accounts.json" --tier High)"
+CODE=$?
+assert_eq "a tier with no known model id exits 2" "2" "$CODE"
 
 # With ORCA_BIN unset and no orca on PATH (the Orca scheduler's case), pick-provider uses the fallback binary.
 NOORCA="$STUB_DIR/noorca-bin"
@@ -864,7 +991,7 @@ NOW_ISO=2026-11-06T12:00:00Z
 NOW_EPOCH="$(date -j -u -f %Y-%m-%dT%H:%M:%SZ "$NOW_ISO" +%s 2>/dev/null || date -u -d "$NOW_ISO" +%s)"
 cat >"$STUB_DIR/pp-ok" <<'STUB'
 #!/usr/bin/env bash
-echo '{"provider":"claude","model":"m","tier":"workhorse"}'
+echo '{"provider":"claude","model":"m","tier":"Mid"}'
 STUB
 cat >"$STUB_DIR/pp-fail" <<'STUB'
 #!/usr/bin/env bash
@@ -1122,6 +1249,88 @@ jq -n --arg a "$STUB_DIR/issue-9" '{result: {worktrees: [
 : >"$STUB_DIR/calls.log"
 bash "$CLEANUP" >/dev/null
 assert_eq "cleanup ignores worktrees not named bm-<n>" "0" "$(calls "orca worktree rm")"
+
+# --- board-run-stats, board-ticket-cli stats and board-setup --stats-fields ---
+RUNSTATS="$REPO/skills/board-worker/scripts/board-run-stats"
+TICKET="$REPO/skills/board-worker/scripts/board-ticket-cli"
+export BOARD_CLAUDE_PROJECTS="$FIX/claude-logs"
+OUT="$(bash "$RUNSTATS" /wt/bm-1)"
+assert_eq "stats counts a streamed message once and prices known models" "0.0048" \
+  "$(jq -r '.models[] | select(.model == "claude-sonnet-5-5") | .costUsd' <<<"$OUT")"
+assert_eq "stats sums every token kind" "3470" "$(jq -r '.tokens' <<<"$OUT")"
+assert_eq "stats measures minutes from first to last message" "39.9" "$(jq -r '.minutes' <<<"$OUT")"
+assert_eq "stats lists an unpriced model" "claude-mystery-9" "$(jq -r '.unpriced[0]' <<<"$OUT")"
+OUT="$(bash "$RUNSTATS" /wt/bm-1 --since 2026-11-10T05:20:00Z)"
+assert_eq "stats --since drops older messages" "2320" "$(jq -r '.tokens' <<<"$OUT")"
+OUT="$(bash "$RUNSTATS" /wt/none 2>/dev/null)"; CODE=$?
+assert_eq "stats with no logs exits 0 with zeros" "0 0" "$CODE $(jq -r '.tokens' <<<"$OUT")"
+bash "$RUNSTATS" /wt/bm-1 --since yesterday >/dev/null 2>&1
+assert_eq "stats rejects a bad --since" "2" "$?"
+
+FIELDS='[{"id":"customfield_1","name":"Agent minutes","custom":true},
+  {"id":"customfield_2","name":"Agent tokens","custom":true},
+  {"id":"customfield_3","name":"Agent cost USD","custom":true}]'
+FIELDS="$(jq -c . <<<"$FIELDS")"
+RUN='{"minutes":10,"tokens":100,"costUsd":1.5,"markdown":"Agent run table"}'
+reset_curl "200|$FIELDS" '200|{"fields":{"customfield_1":5}}' '200|{"fields":{"customfield_2":null}}' \
+  '200|{"fields":{}}' '204|' '201|{}'
+printf '%s' "$RUN" | bash "$TICKET" stats BM-1; CODE=$?
+assert_eq "ticket stats succeeds" "0" "$CODE"
+assert_eq "ticket stats adds to the existing field values" \
+  '{"fields":{"customfield_1":15,"customfield_2":100,"customfield_3":1.5}}' \
+  "$(grep '^PUT ' "$STUB_DIR/curl-calls" | sed 's/^PUT [^ ]* //')"
+assert_eq "ticket stats posts the markdown comment" "1" "$(grep -c 'comment .*Agent run table' "$STUB_DIR/curl-calls")"
+reset_curl '200|[]' '201|{}'
+OUT="$(printf '%s' "$RUN" | bash "$TICKET" stats BM-1 2>&1)"; CODE=$?
+assert_eq "ticket stats with no fields still comments and warns" "0 1 0" \
+  "$CODE $(grep -c 'board-setup --stats-fields' <<<"$OUT") $(grep -c '^PUT ' "$STUB_DIR/curl-calls")"
+reset_curl '200|[]'
+printf 'nope' | bash "$TICKET" stats BM-1 >/dev/null 2>&1
+assert_eq "ticket stats rejects input that is not run stats" "2" "$?"
+
+SETUP_FIELDS='[{"id":"customfield_9","name":"Auto merge","custom":true},
+  {"id":"customfield_2","name":"Agent tokens","custom":true},
+  {"id":"customfield_3","name":"Agent cost USD","custom":true}]'
+reset_curl "200|$(jq -c . <<<"$SETUP_FIELDS")" '200|{"values":[{"id":10068}]}' \
+  '201|{"id":"customfield_11"}' '200|[{"id":7}]' '200|{}' '200|[{"id":7}]' '200|{}' '200|[{"id":7}]' '200|{}'
+OUT="$(bash "$SETUP" --stats-fields 2>&1)"; CODE=$?
+assert_eq "setup --stats-fields creates the missing field and adds all three to the screen" "0 1 3" \
+  "$CODE $(grep -c 'created field Agent minutes' <<<"$OUT") \
+$(grep -c 'POST .*screens/10068/tabs/7/fields' "$STUB_DIR/curl-calls")"
+
+# The plan gate uses an isolated working directory and fake Jira comments.
+PLAN_GATE="$REPO/skills/board-worker/scripts/board-plan-check"
+PLAN_DIR="$STUB_DIR/work/docs/superpowers/plans"
+mkdir -p "$PLAN_DIR"
+# Runs the gate from the fake repository and captures its result and one-line diagnostic.
+run_plan_gate() {
+  ERR="$(cd "$STUB_DIR/work" && bash "$PLAN_GATE" BM-1 2>&1)"; CODE=$?
+}
+run_plan_gate
+assert_eq "missing plan blocks" "1 1" "$CODE $(grep -c . <<<"$ERR")"
+printf '### Task 1: One\n' >"$PLAN_DIR/2026-11-10-BM-1-test.md"
+run_plan_gate
+assert_eq "untagged task blocks" "1" "$CODE"
+printf '### Task 1: One (mechanical)\n' >"$PLAN_DIR/2026-11-10-BM-1-test.md"
+run_plan_gate
+assert_eq "one tagged task needs no comment" "0" "$CODE"
+printf '### Task 2: Two (judgment)\n' >>"$PLAN_DIR/2026-11-10-BM-1-test.md"
+reset_curl '200|{"comments":[],"startAt":0,"maxResults":100,"total":0}'
+run_plan_gate
+assert_eq "two tasks need a dispatch comment" "1" "$CODE"
+reset_curl '200|{"comments":[{"body":"Dispatch: selected"}],"total":1}'
+run_plan_gate
+assert_eq "dispatch comment passes" "0" "$CODE"
+reset_curl '200|{"comments":[{"body":"other"}],"startAt":0,"maxResults":1,"total":2}' \
+  '200|{"comments":[{"body":"Dispatch: selected"}],"startAt":1,"maxResults":1,"total":2}'
+run_plan_gate
+assert_eq "later comment pages are checked" "0" "$CODE"
+reset_curl '500|{}'
+run_plan_gate
+assert_eq "unreadable comments block with one line" "1 1" "$CODE $(grep -c . <<<"$ERR")"
+printf '### Task 3: Three\n' >>"$PLAN_DIR/2026-11-10-BM-1-test.md"
+run_plan_gate
+assert_eq "any untagged task blocks" "1" "$CODE"
 
 if [ "$FAILS" -eq 0 ]; then echo "All board-worker tests passed"; fi
 exit "$FAILS"

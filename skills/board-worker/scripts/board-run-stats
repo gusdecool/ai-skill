@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Summarizes what one Claude Code worker session cost: wall minutes, tokens and an estimated dollar cost.
+# Usage: board-run-stats <worktree-path> [--since <ISO time>] [--provider <name>]
+# Reads the session logs Claude Code keeps for that worktree (${BOARD_CLAUDE_PROJECTS:-~/.claude/projects}/<slug>/
+# *.jsonl), counts each assistant message once, and prices the tokens with model-prices.tsv in the skill folder.
+# Prints one JSON object: {provider, minutes, tokens, costUsd, models: [{model, input, output, cacheRead,
+# cacheWrite, costUsd, priced}], unpriced: [model], markdown}. Exits 0, also with zeros when there are no logs
+# (a stats failure must never block a ticket); exits 2 on bad arguments.
+# Why logs and not Orca: Orca does not report tokens, but every Claude Code session writes per-message usage.
+set -euo pipefail
+
+# Prints an error and exits 2.
+die() { echo "board-run-stats: $*" >&2; exit 2; }
+
+[ "$#" -ge 1 ] || die "usage: board-run-stats <worktree-path> [--since <ISO time>] [--provider <name>]"
+worktree="$1"
+shift
+since="" provider="claude"
+while [ "$#" -gt 0 ]; do
+  [ "$#" -ge 2 ] || die "usage: board-run-stats <worktree-path> [--since <ISO time>] [--provider <name>]"
+  case "$1" in
+    --since) since="$2" ;;
+    --provider) provider="$2" ;;
+    *) die "unknown option: $1" ;;
+  esac
+  shift 2
+done
+[[ -z "$since" || "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(Z|[+-][0-9:]+)$ ]] || die "invalid --since: $since"
+
+prices="$(dirname "${BASH_SOURCE[0]}")/../model-prices.tsv"
+# Claude Code names the log folder after the path with every non-alphanumeric character replaced by '-'.
+slug="$(printf '%s' "${worktree%/}" | sed -E 's/[^A-Za-z0-9]/-/g')"
+dir="${BOARD_CLAUDE_PROJECTS:-$HOME/.claude/projects}/$slug"
+
+shopt -s nullglob
+files=("$dir"/*.jsonl)
+if [ "${#files[@]}" -eq 0 ]; then
+  echo "board-run-stats: no session logs in $dir" >&2
+  files=()
+fi
+
+# Price table as JSON: {model: {in, out, cr, cw}}.
+price_json="$(grep -v '^#' "$prices" | jq -Rn '[inputs | split("\t") | select(length == 5)
+  | {key: .[0], value: {in: (.[1] | tonumber), out: (.[2] | tonumber), cr: (.[3] | tonumber),
+                        cw: (.[4] | tonumber)}}] | from_entries')"
+
+# One record per assistant message (the last copy wins, streaming repeats a message), then totals per model.
+records="[]"
+if [ "${#files[@]}" -gt 0 ]; then
+  records="$(cat "${files[@]}" | jq -cR 'fromjson? | select(.type == "assistant" and .message.usage != null)
+    | {id: (.message.id // .uuid), ts: .timestamp, model: (.message.model // "unknown"), u: .message.usage}' |
+    jq -s --arg since "$since" '[.[] | select($since == "" or .ts >= $since)]
+      | group_by(.id) | map(.[-1])')"
+fi
+
+jq -n --argjson r "$records" --argjson p "$price_json" --arg provider "$provider" '
+  def round($n): (. * pow(10; $n) | round) / pow(10; $n);
+  ($r | map(.ts) | sort) as $ts
+  | ($r | group_by(.model) | map(
+      . as $g | $g[0].model as $m | ($p[$m]) as $pr
+      | {model: $m,
+         input: (map(.u.input_tokens // 0) | add), output: (map(.u.output_tokens // 0) | add),
+         cacheRead: (map(.u.cache_read_input_tokens // 0) | add),
+         cacheWrite: (map(.u.cache_creation_input_tokens // 0) | add)}
+      | . + {priced: ($pr != null),
+             costUsd: (if $pr == null then 0 else
+               ((.input * $pr.in + .output * $pr.out + .cacheRead * $pr.cr + .cacheWrite * $pr.cw) / 1000000)
+               end)})) as $models
+  | {provider: $provider,
+     minutes: (if ($ts | length) < 2 then 0
+               else (((($ts[-1] | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)
+                       - ($ts[0] | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) / 60) | round(1)) end),
+     tokens: ($models | map(.input + .output + .cacheRead + .cacheWrite) | add // 0),
+     costUsd: ($models | map(.costUsd) | add // 0 | round(2)),
+     models: ($models | map(.costUsd |= round(4))),
+     unpriced: ($models | map(select(.priced | not) | .model))}
+  | . + {markdown: (
+      "Agent run (" + .provider + ")\n\n| Item | Value |\n|---|---|\n"
+      + "| Wall time | " + (.minutes | tostring) + " min |\n"
+      + "| Tokens | " + (.tokens | tostring) + " |\n"
+      + "| Estimated cost | $" + (.costUsd | tostring) + " |\n"
+      + "| Models | " + (if (.models | length) == 0 then "none" else (.models | map(.model) | join(", ")) end) + " |\n\n"
+      + "Cost is an estimate: tokens times list price"
+      + (if (.unpriced | length) > 0 then "; no price for " + (.unpriced | join(", ")) + " (counted as 0)" else "" end)
+      + ".")}'
