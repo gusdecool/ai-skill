@@ -132,6 +132,7 @@ stop (see "Stopping").
    in BM-55 the agent dispatched to the first provider under its cutoffs and skipped the formula.
    A worker that coded inline skipped the balancer and used one provider, so multi-task plans must be dispatched.
    Run `board-plan-check <ticket-key>` before the first product-code edit; if it exits 1, stop (see Stopping).
+   It also fails when the `Dispatch:` comment has no score table.
    Dispatch each task as a worker with
    `orca orchestration worker-start --worktree current`, an explicit model and the plan file, then run `board-watch`
    in the background for all running workers and wait for it. Use no tokens while it waits.

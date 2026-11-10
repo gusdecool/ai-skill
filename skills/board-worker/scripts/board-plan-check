@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Checks the ticket's tagged plan and, for multiple tasks, its dispatch comment before product edits.
+# Checks the ticket's tagged plan and, for multiple tasks, its dispatch comment before product edits. The comment must
+# hold the load-balancer score table (a `| Provider |` header and a chosen row), so a reviewer sees the formula ran.
 # Usage: board-plan-check <ticket-key>; exits 0 on success or 1 with one diagnostic line on failure.
 set -euo pipefail
 
@@ -37,12 +38,13 @@ while :; do
   page="$(jira_api GET "/rest/api/2/issue/$key/comment?startAt=$start&maxResults=100" 2>/dev/null)" \
     || fail 'cannot read ticket comments'
   jq -e '.comments | type == "array"' <<<"$page" >/dev/null 2>&1 || fail 'invalid ticket comments'
-  if jq -e '.comments[] | select((.body | type) == "string" and (.body | contains("Dispatch:")))' \
+  if jq -e '.comments[] | select((.body | type) == "string" and (.body | contains("Dispatch:"))
+    and (.body | contains("| Provider |")) and (.body | contains("| chosen |")))' \
     <<<"$page" >/dev/null 2>&1; then exit 0; fi
   count="$(jq '.comments | length' <<<"$page")"
   total_comments="$(jq -r '.total // empty' <<<"$page")"
   [[ "$total_comments" =~ ^[0-9]+$ ]] || fail 'invalid ticket comments'
   start=$((start + count))
-  [ "$start" -lt "$total_comments" ] || fail 'missing Dispatch: comment'
+  [ "$start" -lt "$total_comments" ] || fail 'missing Dispatch: comment with the pick-provider score table'
   [ "$count" -gt 0 ] || fail 'incomplete ticket comments'
 done
