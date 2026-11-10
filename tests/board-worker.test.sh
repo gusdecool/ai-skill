@@ -656,6 +656,24 @@ CODE=$?
 assert_eq "--orchestrator exits 1 when claude reaches 90 weekly" "1" "$CODE"
 assert_eq "--orchestrator names the error" "1" "$(jq -r 'has("error") | if . then 1 else 0 end' <<<"$OUT")"
 
+OPENCODE='{"provider":"opencode-go","status":"ok",
+  "session":{"usedPercent":0,"windowMinutes":300,"resetsAt":1000010000000},
+  "weekly":{"usedPercent":0,"windowMinutes":10080,"resetsAt":1000500000000},
+  "monthly":{"usedPercent":0,"windowMinutes":43200,"resetsAt":1002000000000}}'
+tweak_accounts ".result.rateLimits.opencodeGo = $OPENCODE | .result.rateLimits.claude.status = \"error\"
+  | .result.rateLimits.codex.status = \"error\"
+  | .result.rateLimits.antigravity.status = \"error\""
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+assert_eq "opencode go can be picked with its DeepSeek model" \
+  '{"provider":"opencode","model":"opencode-go/deepseek-v4-pro","tier":"Mid"}' "$(jq -c . <<<"$OUT")"
+
+tweak_accounts ".result.rateLimits.opencodeGo = $OPENCODE | .result.rateLimits.opencodeGo.monthly.usedPercent = 95
+  | .result.rateLimits.claude.status = \"error\" | .result.rateLimits.codex.status = \"error\"
+  | .result.rateLimits.antigravity.status = \"error\""
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+CODE=$?
+assert_eq "opencode go over its monthly cutoff is skipped" "1" "$CODE"
+
 cat >"$STUB_DIR/models.md" <<'MD'
 | Provider | Low | Mid | High | Ultra |
 |---|---|---|---|---|
