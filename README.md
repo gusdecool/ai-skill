@@ -9,15 +9,16 @@ that read the shared skills folder.
 |---|---|---|
 | `gusdecool-board-issue` | Write a board-ready issue (final spec, Auto merge) | [SKILL.md][gusdecool-board-issue] |
 | `gusdecool-board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][gusdecool-board-worker] |
-| `/gusdecool:git-workflow` | Git rules: branches, commits, PRs, CI, project board | [SKILL.md][git-workflow] |
+| `gusdecool-git-workflow` | Git rules: branches, commits, PRs, CI, project board | [SKILL.md][gusdecool-git-workflow] |
 | `gusdecool-load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][gusdecool-load-balancer] |
 | `gusdecool-mysql-branch` | MySQL branching: one database per git branch | [SKILL.md][gusdecool-mysql-branch] |
 
-In Claude Code the skill is `/gusdecool:<name>`. In other agents, say its name, for example "use MySQL branch".
+Every agent calls a skill by its name, for example `gusdecool-mysql-branch`. Installed as a Claude Code plugin, the
+command is `/gusdecool:gusdecool-<name>`.
 
 [gusdecool-board-issue]: skills/gusdecool-board-issue/SKILL.md
 [gusdecool-board-worker]: skills/gusdecool-board-worker/SKILL.md
-[git-workflow]: skills/gusdecool-git-workflow/SKILL.md
+[gusdecool-git-workflow]: skills/gusdecool-git-workflow/SKILL.md
 [gusdecool-load-balancer]: skills/gusdecool-load-balancer/SKILL.md
 [gusdecool-mysql-branch]: skills/gusdecool-mysql-branch/SKILL.md
 
@@ -98,8 +99,8 @@ Inside Claude Code:
 /plugin install gusdecool@gusdecool
 ```
 
-Plugin skills are namespaced, so the command becomes `/gusdecool:mysql-branch`. Every skill added to this repo later
-shows up as `/gusdecool:<skill-name>`.
+Plugin skills are namespaced, so the command becomes `/gusdecool:gusdecool-mysql-branch`. Every skill added to this
+repo later shows up as `/gusdecool:gusdecool-<skill-name>`.
 
 ### Option C: Codex plugin
 
@@ -110,7 +111,7 @@ codex plugin add gusdecool
 
 ### Check it works
 
-Restart or open a new agent session and ask: "what skills do you have?" You should see `mysql-branch`.
+Restart or open a new agent session and ask: "what skills do you have?" You should see `gusdecool-mysql-branch`.
 To update later, run `npx skills update` (Option A),
 `/plugin marketplace update gusdecool` (Option B)
 or `codex plugin marketplace upgrade` (Option C).
