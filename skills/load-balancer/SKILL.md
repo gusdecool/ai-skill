@@ -67,7 +67,7 @@ If the user pinned a provider for the task, use it and do not balance.
 Claude is skipped because its weekly 81% is over its reserved 75% cutoff. Picks go codex (141), then antigravity (118)
 once Codex's session numbers shift. If the caller were Codex, the same rule would reserve Codex instead.
 
-If every provider is over a cutoff or unavailable, stop and tell the user the earliest `resetsAt`.
+If no worker provider is eligible, the tasks wait for the earliest `resetsAt`: see "Waiting for a quota reset" below.
 
 ## Dispatching
 
@@ -105,6 +105,28 @@ as a stall. On a flag:
 3. Pick the next eligible provider by the rules above and give it the same task from the plan file, at the same tier
    (Workhorse stays Workhorse). Note in the ledger that the task changed provider and why. Never move up to a
    top-tier model to make up for a limit.
+
+## Waiting for a quota reset
+
+Only the orchestrator (the provider you run on) pauses the whole job. A worker's provider hitting its limit is not a
+reason to stop: take the task over with the next eligible provider (see "Watching for stuck workers"). Never ask the
+user whether to wait; read the reset time from the tool and tell them when the work continues.
+
+1. **Trigger.** When the orchestrator's own provider reaches 90% in either window (session or weekly), start this
+   procedure. Do not start new tasks. Let each running worker finish its current step, accept its report, and record
+   the state in the plan file (ticked boxes, WIP commits noted).
+2. **Read the reset time from the tool** (`resetsAt` of the window at or over 90%, the later one if both) and tell the
+   user in one message: which window is full, the local clock time work will continue, and that nothing is lost
+   because the plan file holds the state. If no worker provider is eligible either, the same applies with the earliest
+   `resetsAt` among them. This is a notice, not a question.
+3. **Wait with a watcher.** Schedule the next check with whatever the host offers (a scheduled wakeup or loop), at the
+   reset time or every 5 minutes, whichever comes first. Each tick: re-read the quotas; do nothing until the
+   orchestrator is under 90% in both windows. A watcher dies if the computer sleeps, so say that in the notice.
+4. **Resume in place.** Read the plan file and continue from the first unticked box. Send each stopped worker a
+   follow-up on its own dispatch (in Orca: `orchestration send --to dispatch:<id>`, which reopens it): the limit has
+   reset, continue from the WIP commit, finish the remaining steps. Check `git log` and `git status` in its worktree
+   first. If that worker's provider is still over its cutoff, give the task to the next eligible provider instead.
+5. **Never switch tiers** to get around the wait (no top-tier model, no model missing from the table).
 
 ## Releasing workers
 
