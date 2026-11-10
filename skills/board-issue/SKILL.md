@@ -19,7 +19,9 @@ Never use this skill in a session whose prompt starts with `BOARD-WORKER`: a wor
 2. **One question round.** Ask every remaining question at once, as choices: the options, your recommendation first,
    and each option's tradeoff in a line. No open questions with no options. The agent that works the ticket cannot ask
    the user, so anything left open becomes a guess. Also ask the priority (Highest, High, Medium, Low, Lowest;
-   default Medium).
+   default Medium), and which open tickets must be finished first (blockers). Offer the open tickets of the same
+   repo or epic as options, with "none" as the default. Why: the dispatcher builds blockers first and reminds the
+   user about blockers that are not queued, but only for blockers recorded as Jira links.
 3. **Write the draft** to a temp file in Jira wiki markup, one ticket = one PR (split anything bigger), using this
    template:
 
@@ -32,6 +34,7 @@ Never use this skill in a session whose prompt starts with `BOARD-WORKER`: a wor
 
    h2. Constraints
    Files, APIs, libraries or rules to respect. Anything that must not change.
+   Depends on: BM-12, BM-15 (only when the question round named blockers).
 
    h2. Decisions made
    The options chosen in the question round, with a short reason each.
@@ -65,9 +68,12 @@ Never use this skill in a session whose prompt starts with `BOARD-WORKER`: a wor
    --description-file <draft> --priority <priority>`. The component is the repo as `owner/repo`. It prints
    `{"key","url"}`. The ticket starts in Backlog, never Todo. Only if the user said yes in step 6, then run
    `board-ticket-cli automerge <key>`.
+   For each blocker named in step 2, run `board-ticket-cli link <key> blocked-by <blocker-key>`.
 8. **Status.** Leave it in Backlog. Move it to Todo (`board-set-status <key> Todo`) only if the user says to queue it
    now, or answers yes when you ask. Why: Todo starts the worker within 10 minutes, so it is the user's go signal.
    Before moving any existing ticket to Todo, read it with `board-ticket-cli view <key>`. If `autoMerge` is not `true`,
    ask the step 6 question first, default no, and on yes run `board-ticket-cli automerge <key>`. Why: an unticked box
    is a silent no, and the user should decide it once, not discover an unmerged PR later.
-9. **Report** the ticket URL, the status, the Auto merge value and any warning from step 5.
+9. **Report** the ticket URL, the status, the Auto merge value, the blockers linked and any warning from step 5.
+   When the new ticket is moved to Todo while a blocker is still in Backlog, say that the dispatcher will move it
+   to HITL until the blocker is queued.

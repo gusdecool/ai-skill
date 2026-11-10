@@ -284,15 +284,30 @@ route() {
 }
 
 READY_DESC=$'## Goal\nX\n\n## Done when\nY\n'
-# Replaces the Todo tickets of the fake Jira board. Each argument is "KEY|Priority|component", the last two may be
-# empty. Every ticket also gets a ready-check route (a ready description) with its component.
+# Replaces the Todo tickets of the fake Jira board. Each argument is "KEY|Priority|component|links", the last three may
+# be empty. links is a comma list of "BLOCKER:Status" (a Blocks link where the ticket is blocked), "rel:KEY:Status" (a
+# Relates link) or "out:KEY:Status" (a Blocks link where the ticket is the blocker). Every ticket also gets a
+# ready-check route (a ready description) with its component.
 set_todos() {
-  local spec key prio comp issues="[]"
+  local spec key prio comp links issues="[]" link a b c
   for spec in "$@"; do
-    IFS='|' read -r key prio comp <<<"$spec"
-    issues="$(jq -c --arg k "$key" --arg p "$prio" --arg c "$comp" \
+    IFS='|' read -r key prio comp links <<<"$spec"
+    local il="[]"
+    while IFS= read -r link; do
+      [ -n "$link" ] || continue
+      IFS=: read -r a b c <<<"$link"
+      case "$a" in
+        rel) il="$(jq -c --arg k "$b" --arg s "$c" '. + [{type: {name: "Relates"},
+          inwardIssue: {key: $k, fields: {status: {name: $s}}}}]' <<<"$il")" ;;
+        out) il="$(jq -c --arg k "$b" --arg s "$c" '. + [{type: {name: "Blocks"},
+          outwardIssue: {key: $k, fields: {status: {name: $s}}}}]' <<<"$il")" ;;
+        *) il="$(jq -c --arg k "$a" --arg s "$b" '. + [{type: {name: "Blocks"},
+          inwardIssue: {key: $k, fields: {status: {name: $s}}}}]' <<<"$il")" ;;
+      esac
+    done < <(tr ',' '\n' <<<"$links")
+    issues="$(jq -c --arg k "$key" --arg p "$prio" --arg c "$comp" --argjson il "$il" \
       '. + [{key: $k, fields: {priority: (if $p == "" then null else {name: $p} end),
-        components: (if $c == "" then [] else [{name: $c}] end)}}]' <<<"$issues")"
+        components: (if $c == "" then [] else [{name: $c}] end), issuelinks: $il}}]' <<<"$issues")"
     route "50-ready-$key" "GET */rest/api/2/issue/$key\\?fields=description,components" \
       "200|$(jq -cn --arg d "$READY_DESC" --arg c "$comp" \
         '{fields: {description: $d, components: (if $c == "" then [] else [{name: $c}] end)}}')"
@@ -447,6 +462,68 @@ run_pick
 assert_eq "an unreadable ticket is skipped" "BM-11" "$(jq -r .key <<<"$OUT")"
 assert_eq "an unreadable ticket is named on stderr" "1" "$(grep -c 'skipping BM-12, cannot read it' <<<"$ERR")"
 assert_eq "an unreadable ticket is left alone" "" "$(mutations BM-12)"
+
+echo "Pick next with dependencies"
+X=gusdecool/x
+reset_board
+set_todos "BM-20|Highest|$X|BM-21:Todo" "BM-21|Low|$X"
+run_pick
+assert_eq "a Todo blocker is picked before its dependent" "BM-21" "$(jq -r .key <<<"$OUT")"
+assert_eq "picking the blocker changes nothing" "0" "$(mutation_count)"
+set_todos "BM-30|Highest|$X|BM-31:Todo" "BM-31|High|$X|BM-32:Todo" "BM-32|Low|$X"
+run_pick
+assert_eq "a chain of Todo blockers is walked to the first one" "BM-32" "$(jq -r .key <<<"$OUT")"
+set_todos "BM-60|Highest|$X|BM-61:QA,BM-62:Done"
+run_pick
+assert_eq "blockers in QA and Done do not block" "BM-60" "$(jq -r .key <<<"$OUT")"
+set_todos "BM-90|Highest|$X|rel:BM-91:Backlog,out:BM-92:Backlog"
+run_pick
+assert_eq "a Relates link and a Blocks link from the other side are ignored" "BM-90" "$(jq -r .key <<<"$OUT")"
+
+reset_board
+set_todos "BM-40|Highest|$X|BM-41:In progress" "BM-42|Low|$X"
+run_pick
+assert_eq "a dependent of an In progress ticket is skipped for the next one" "BM-42" "$(jq -r .key <<<"$OUT")"
+assert_eq "an In progress blocker leaves the dependent untouched" "" "$(mutations BM-40)"
+
+reset_board
+set_todos "BM-50|Highest|$X|BM-51:Backlog" "BM-52|Low|$X"
+run_pick
+assert_eq "a dependent of a Backlog ticket is skipped for the next one" "BM-52" "$(jq -r .key <<<"$OUT")"
+assert_eq "a dependent of a Backlog ticket is parked: move, then comment" "move comment" "$(mutations BM-50)"
+assert_eq "the comment names the blocker and its status" "1" \
+  "$(comment_of BM-50 | grep -c -F 'Blocked by BM-51 (Backlog)')"
+assert_eq "the comment says the ticket moved to HITL" "1" "$(comment_of BM-50 | grep -c -F 'Moved to HITL.')"
+set_todos "BM-50|Highest|$X|BM-51:HITL,BM-53:Todo" "BM-53|Low|$X"
+run_pick
+assert_eq "a HITL blocker parks the dependent even when another blocker is Todo" "1" \
+  "$(comment_of BM-50 | grep -c -F 'BM-51 (HITL)')"
+run_pick --dry-run
+assert_eq "dry-run skips a blocked ticket without changing anything" "BM-53 0" \
+  "$(jq -r .key <<<"$OUT") $(mutation_count)"
+
+reset_board
+set_todos "BM-70|Highest|$X|BM-71:Todo" "BM-71|High|$X|BM-70:Todo" "BM-72|Low|$X"
+run_pick
+assert_eq "a dependency cycle is skipped for the next ticket" "BM-72" "$(jq -r .key <<<"$OUT")"
+assert_eq "both tickets of a cycle are parked once" "move comment|move comment" \
+  "$(mutations BM-70)|$(mutations BM-71)"
+assert_eq "the cycle comment shows the cycle" "1" "$(comment_of BM-70 | grep -c -F 'cycle: BM-70 -> BM-71 -> BM-70')"
+
+reset_board
+set_todos "BM-80|Highest|$X|BM-81:Todo" "BM-81|High|acme/y" "BM-82|Low|$X"
+run_pick
+assert_eq "a Todo blocker of a not-allowed owner parks the dependent" "BM-82 move-comment" \
+  "$(jq -r .key <<<"$OUT") $(mutations BM-80 | tr ' ' '-')"
+assert_eq "the not-allowed blocker is left untouched" "" "$(mutations BM-81)"
+
+reset_board
+set_todos "BM-100|Highest|$X|BM-101:Todo" "BM-101|High|$X" "BM-102|Low|$X"
+make_unready BM-101
+run_pick
+assert_eq "an unready blocker is parked and then its dependent is parked once" \
+  "BM-102|move comment|move comment" "$(jq -r .key <<<"$OUT")|$(mutations BM-101)|$(mutations BM-100)"
+assert_eq "the dependent's comment names the parked blocker" "1" "$(comment_of BM-100 | grep -c -F 'BM-101 (HITL)')"
 
 echo "Set status"
 TRANSITIONS='{"transitions":[{"id":"11","name":"Start","to":{"name":"In progress"}},'
