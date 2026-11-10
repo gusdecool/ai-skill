@@ -7,17 +7,43 @@ that read the shared skills folder.
 
 | Skill | Use case | Details |
 |---|---|---|
+| `/gusdecool:authoring-skills` | Change a skill by PR in its source repo, then install | [SKILL.md][authoring-skills] |
 | `/gusdecool:board-issue` | Write a board-ready issue (final spec, optional Auto merge) | [SKILL.md][board-issue] |
 | `/gusdecool:board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][board-worker] |
+| `/gusdecool:git-workflow` | Branches, commits, PRs, CI, optional project board | [SKILL.md][git-workflow] |
+| `/gusdecool:infra-conventions` | IaC, CI pinning, migrations, deploy-failure logs | [SKILL.md][infra-conventions] |
 | `/gusdecool:load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][load-balancer] |
+| `/gusdecool:long-task-communication` | Estimate, follow-ups, blocked-by-limit | [SKILL.md][long-task-communication] |
+| `/gusdecool:model-policy` | Model tier per phase of agent work | [SKILL.md][model-policy] |
 | `/gusdecool:mysql-branch` | MySQL branching: one database per git branch / worktree | [SKILL.md][mysql-branch] |
+| `/gusdecool:project-standards` | Sync stack rules into a repo's own AGENTS.md | [SKILL.md][project-standards] |
+| `/gusdecool:rest-api-design` | REST URL, contract and error rules; design first | [SKILL.md][rest-api-design] |
 
 In Claude Code the skill is `/gusdecool:<name>`. In other agents, say its name, for example "use MySQL branch".
 
+[authoring-skills]: skills/authoring-skills/SKILL.md
 [board-issue]: skills/board-issue/SKILL.md
 [board-worker]: skills/board-worker/SKILL.md
+[git-workflow]: skills/git-workflow/SKILL.md
+[infra-conventions]: skills/infra-conventions/SKILL.md
 [load-balancer]: skills/load-balancer/SKILL.md
+[long-task-communication]: skills/long-task-communication/SKILL.md
+[model-policy]: skills/model-policy/SKILL.md
 [mysql-branch]: skills/mysql-branch/SKILL.md
+[project-standards]: skills/project-standards/SKILL.md
+[rest-api-design]: skills/rest-api-design/SKILL.md
+
+## Config files
+
+Two skills read owner-specific values from a config file on your machine. Both use plain `KEY=value` lines, ask once
+for a missing value and save the answer, and never print the file.
+
+- `~/.config/git-workflow/config`: `BOARD_OWNER` (owner of the GitHub Project), `BOARD_NUMBER` (project number),
+  `BOARD_REPO_OWNERS` (comma list of repo owners the board rules apply to), `BOARD_STATUS_BACKLOG`,
+  `BOARD_STATUS_IN_PROGRESS` and `BOARD_STATUS_QA` (board columns). Without the file, or for a repo owner not in
+  `BOARD_REPO_OWNERS`, `git-workflow` skips every board step and says so in one line.
+- `~/.config/project-standards/config`: `PLATFORM=` and `STACK_<LANGUAGE>=` lines hold the stack preferences for a new
+  project. Without the file, `project-standards` asks the user.
 
 ## Board worker config
 
