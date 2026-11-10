@@ -5,5 +5,5 @@ load-balancer skill. Why: when every provider hit its limit, the skill only said
 resume steps were improvised.
 
 ### Task 1: Add the "Waiting for a quota reset" section (mechanical)
-- [x] Replace the stop line with a pointer and add the section to `skills/load-balancer/SKILL.md`
+- [x] Add the "Waiting for a quota reset" section: only the orchestrator pauses (at 90%), no question to the user
 - [x] Run `tests/check-structure.sh`
