@@ -1302,6 +1302,8 @@ $(grep -c 'POST .*screens/10068/tabs/7/fields' "$STUB_DIR/curl-calls")"
 PLAN_GATE="$REPO/skills/board-worker/scripts/board-plan-check"
 PLAN_DIR="$STUB_DIR/work/docs/superpowers/plans"
 mkdir -p "$PLAN_DIR"
+# A pick-provider score table (JSON-escaped newlines) that a dispatch comment must hold.
+SCORE_TABLE='| Provider | Score | Result |\n|---|---|---|\n| codex | 2 | chosen |'
 # Runs the gate from the fake repository and captures its result and one-line diagnostic.
 run_plan_gate() {
   ERR="$(cd "$STUB_DIR/work" && bash "$PLAN_GATE" BM-1 2>&1)"; CODE=$?
@@ -1320,9 +1322,12 @@ run_plan_gate
 assert_eq "two tasks need a dispatch comment" "1" "$CODE"
 reset_curl '200|{"comments":[{"body":"Dispatch: selected"}],"total":1}'
 run_plan_gate
-assert_eq "dispatch comment passes" "0" "$CODE"
+assert_eq "dispatch comment without the score table blocks" "1" "$CODE"
+reset_curl "200|{\"comments\":[{\"body\":\"Dispatch: selected\\n$SCORE_TABLE\"}],\"total\":1}"
+run_plan_gate
+assert_eq "dispatch comment with the score table passes" "0" "$CODE"
 reset_curl '200|{"comments":[{"body":"other"}],"startAt":0,"maxResults":1,"total":2}' \
-  '200|{"comments":[{"body":"Dispatch: selected"}],"startAt":1,"maxResults":1,"total":2}'
+  "200|{\"comments\":[{\"body\":\"Dispatch: selected\\n$SCORE_TABLE\"}],\"startAt\":1,\"maxResults\":1,\"total\":2}"
 run_plan_gate
 assert_eq "later comment pages are checked" "0" "$CODE"
 reset_curl '500|{}'
