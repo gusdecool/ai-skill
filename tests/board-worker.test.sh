@@ -598,7 +598,7 @@ tweak_accounts() { jq "$1" "$FIX/accounts.json" >"$STUB_DIR/accounts.json"; }
 OUT="$(run_provider "$FIX/accounts.json")"
 CODE=$?
 assert_eq "worked example picks codex" \
-  '{"provider":"codex","model":"gpt-6.1-sol","tier":"workhorse"}' "$(jq -c . <<<"$OUT")"
+  '{"provider":"codex","model":"gpt-6.1-sol","tier":"Mid"}' "$(jq -c . <<<"$OUT")"
 assert_eq "worked example exits 0" "0" "$CODE"
 
 tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rateLimits.claude.session.usedPercent = 5
@@ -648,6 +648,31 @@ OUT="$(run_provider "$STUB_DIR/accounts.json" --orchestrator)"
 CODE=$?
 assert_eq "--orchestrator exits 1 when claude is over its reserved cutoff" "1" "$CODE"
 assert_eq "--orchestrator names the error" "1" "$(jq -r 'has("error") | if . then 1 else 0 end' <<<"$OUT")"
+
+cat >"$STUB_DIR/models.md" <<'MD'
+| Provider | Low | Mid | High | Ultra |
+|---|---|---|---|---|
+| Claude | Haiku 5.5 | Sonnet 5.5 | none | none |
+| Codex | Luna | Sol | none | none |
+| Gemini | 3.5 Flash-Lite | 3.8 Flash | none | none |
+MD
+OUT="$(MODELS_FILE="$STUB_DIR/models.md" run_provider "$FIX/accounts.json" --tier High)"
+CODE=$?
+assert_eq "a tier no provider has exits 1" "1" "$CODE"
+ERR="$(MODELS_FILE="$STUB_DIR/models.md" ACCOUNTS_FIXTURE="$FIX/accounts.json" ORCA_BIN="$STUB_DIR/orca" \
+  CODEX_MODELS_CACHE="$STUB_DIR/codex-models.json" NOW_MS=1000000000000 bash "$PICKPROV" --tier High 2>&1 >/dev/null)"
+assert_eq "the refusal names provider and tier" "1" \
+  "$(grep -c 'codex has no High model' <<<"$ERR" | grep -q '^1$' && echo 1 || echo 0)"
+OUT="$(MODELS_FILE="$STUB_DIR/models.md" run_provider "$FIX/accounts.json" --tier Mid)"
+CODE=$?
+assert_eq "tier Mid still works with the table" "codex Mid 0" "$(jq -r '.provider + " " + .tier' <<<"$OUT") $CODE"
+OUT="$(MODELS_FILE="$STUB_DIR/models.md" run_provider "$FIX/accounts.json" --tier workhorse)"
+CODE=$?
+assert_eq "an old tier name is refused" "2" "$CODE"
+sed -i.bak 's/| none | none |$/| Opus 5.5 | none |/;' "$STUB_DIR/models.md"
+OUT="$(MODELS_FILE="$STUB_DIR/models.md" run_provider "$FIX/accounts.json" --tier High)"
+CODE=$?
+assert_eq "a tier with no known model id exits 2" "2" "$CODE"
 
 # With ORCA_BIN unset and no orca on PATH (the Orca scheduler's case), pick-provider uses the fallback binary.
 NOORCA="$STUB_DIR/noorca-bin"
@@ -941,7 +966,7 @@ NOW_ISO=2026-11-06T12:00:00Z
 NOW_EPOCH="$(date -j -u -f %Y-%m-%dT%H:%M:%SZ "$NOW_ISO" +%s 2>/dev/null || date -u -d "$NOW_ISO" +%s)"
 cat >"$STUB_DIR/pp-ok" <<'STUB'
 #!/usr/bin/env bash
-echo '{"provider":"claude","model":"m","tier":"workhorse"}'
+echo '{"provider":"claude","model":"m","tier":"Mid"}'
 STUB
 cat >"$STUB_DIR/pp-fail" <<'STUB'
 #!/usr/bin/env bash

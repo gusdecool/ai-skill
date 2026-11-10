@@ -120,7 +120,7 @@ stop (see "Stopping").
      release the worker, then dispatch the next task.
    - On `stuck`: take over as the `load-balancer` skill says (stop the worker, keep its uncommitted draft, give the
      same task to the next eligible provider at the same tier). Never answer a provider prompt such as "switch to
-     another model" with "switch", and never move up to a top-tier model. If every provider is over a cutoff, stop
+     another model" with "switch", and never move up to a High or Ultra model. If every provider is over a cutoff, stop
      (see Stopping) and put the earliest reset time in the comment.
    - A plan with one task is implemented by you, inline.
    - Post a ticket comment at every task finish and every takeover, and at least once an hour while waiting. This
