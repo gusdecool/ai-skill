@@ -68,13 +68,16 @@
 ### Task 3: skill text (mechanical)
 
 **Files:**
-- Modify: `skills/gusdecool-board-issue/SKILL.md`, `skills/gusdecool-board-worker/SKILL.md`, `skills/gusdecool-board-worker/scripts/board-pick-next`
+- Modify: `skills/gusdecool-board-issue/SKILL.md`, `skills/gusdecool-board-worker/SKILL.md`,
+  `skills/gusdecool-board-worker/scripts/board-pick-next`
   header comment
 
-- [x] **Step 1: gusdecool-board-issue**: in step 2 ask which tickets block the new one (options from the open tickets of the
+- [x] **Step 1: gusdecool-board-issue**: in step 2 ask which tickets block the new one (options from the open
+  tickets of the
   same epic or repo, none as the default); in step 7 run `board-ticket-cli link <key> blocked-by <blocker>` for each;
   in step 9 report them. Add the dependency note to the draft template under Constraints.
-- [x] **Step 2: gusdecool-board-worker**: describe the dispatcher rule in one short paragraph (workers still use only the four
+- [x] **Step 2: gusdecool-board-worker**: describe the dispatcher rule in one short paragraph (workers still use only
+  the four
   subcommands).
 - [x] **Step 3: Run all tests and `bash tests/check-structure.sh`; check no line exceeds 120 characters.**
 - [x] **Step 4: Commit, push, open the PR (base `refactor/board-ticket-cli`), watch CI.**

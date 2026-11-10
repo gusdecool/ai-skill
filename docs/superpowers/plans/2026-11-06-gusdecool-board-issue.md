@@ -11,7 +11,8 @@ can check a draft file, so the same readiness rules gate the draft before the is
 **Tech Stack:** bash, jq, `gh`.
 
 **Spec:** the user-approved design in the conversation of 2026-11-06 (gusdecool/idea issue 24); the issue template
-is in `gusdecool/idea` `docs/orca-kanban-automation.md`. Stacked on `gusdecool/ai-skill` PR 7 (feat/gusdecool-board-worker).
+is in `gusdecool/idea` `docs/orca-kanban-automation.md`. Stacked on `gusdecool/ai-skill` PR 7
+(feat/gusdecool-board-worker).
 
 ## Global Constraints
 
@@ -44,5 +45,6 @@ is in `gusdecool/idea` `docs/orca-kanban-automation.md`. Stacked on `gusdecool/a
 
 ### Task 3: PR (mechanical)
 
-- [x] **Step 1:** Push `feat/gusdecool-board-issue`, open the PR with base `feat/gusdecool-board-worker` (`Refs gusdecool/idea#24`), watch
+- [x] **Step 1:** Push `feat/gusdecool-board-issue`, open the PR with base `feat/gusdecool-board-worker`
+  (`Refs gusdecool/idea#24`), watch
   CI. Waits for CI; the user merges PR 7 first, then retargets this PR to main.

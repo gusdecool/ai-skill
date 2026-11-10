@@ -7,7 +7,8 @@
 provider when one hits a limit.
 
 **Architecture:** A model-free `board-watch` script reports stuck or settled workers; the orchestrator (the existing
-`BOARD-WORKER` session) reacts using the `gusdecool-load-balancer` takeover rules. `pick-provider --orchestrator` keeps the
+`BOARD-WORKER` session) reacts using the `gusdecool-load-balancer` takeover rules. `pick-provider --orchestrator`
+keeps the
 orchestrator on Claude within its reserved cutoff.
 
 **Tech Stack:** bash, jq, the `orca` CLI; tests in `tests/gusdecool-board-worker.test.sh`.
@@ -80,11 +81,13 @@ orchestrator on Claude within its reserved cutoff.
 - Modify: `skills/gusdecool-board-worker/SKILL.md`, `skills/gusdecool-load-balancer/SKILL.md`
 - Modify (idea repo, separate PR): `docs/orca-kanban-automation.md`
 
-- [x] **Step 1: `gusdecool-board-worker/SKILL.md`:** add `board-watch` to the scripts list; step 4 orchestrates for two or more
+- [x] **Step 1: `gusdecool-board-worker/SKILL.md`:** add `board-watch` to the scripts list; step 4 orchestrates for two
+  or more
   tasks (dispatch with `worker-start --worktree current`, run `board-watch` in the background, on `stuck` follow the
   gusdecool-load-balancer takeover, on `settled` check the work, release workers); one-task plans stay inline; heartbeat
   comment on each task finish, takeover and at least hourly; clock 180 minutes; only the orchestrator merges.
-- [x] **Step 2: `gusdecool-load-balancer/SKILL.md`:** the watch uses screen text and a human-prompt signal besides quota and
+- [x] **Step 2: `gusdecool-load-balancer/SKILL.md`:** the watch uses screen text and a human-prompt signal besides
+  quota and
   silence; interval 10 minutes; never choose "switch model" on a provider prompt; the Orca adapter names `board-watch`.
 - [x] **Step 3: Run `bash tests/check-structure.sh` and the full test file, expect 0 FAIL.**
 - [x] **Step 4: Commit,** push, open the `ai-skill` PR (`Refs` the issue if one exists), watch CI.

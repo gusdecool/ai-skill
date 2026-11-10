@@ -1,7 +1,8 @@
 # Load balancer: OpenCode Go provider
 
 Spec: the owner subscribed to OpenCode Go (2026-11-10) and wants DeepSeek V4.1 Flash (Low) and V4 Pro (Mid) used by
-the gusdecool-load-balancer skill. Choices: add the `monthly` window to the urgency score, cutoffs 95 for monthly (75 for the
+the gusdecool-load-balancer skill. Choices: add the `monthly` window to the urgency score, cutoffs 95 for monthly
+(75 for the
 reserved provider), slugs live in `agent-standards` `models.md`, and a `worker-start` test before writing the adapter.
 
 ### Task 1: Verify OpenCode Go in Orca (mechanical)

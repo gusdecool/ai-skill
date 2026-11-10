@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# gusdecool-mysql-branch: one MySQL database per git branch, cloned from a template database, for a MySQL running in Docker.
+# gusdecool-mysql-branch: one MySQL database per git branch, cloned from a template database, for a MySQL running
+# in Docker.
 # Usage: mysql-branch.sh <template|create|use|name|list|drop> [branch] [--schema-only] [--yes]
 set -euo pipefail
 

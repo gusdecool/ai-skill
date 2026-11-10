@@ -8,8 +8,10 @@ this way on Codex; the 2-hour reaper only moves the card to HITL, it never finis
 
 ## What it becomes
 
-The session the dispatcher starts is an orchestrator, an extension of the existing `gusdecool-load-balancer` skill, not a new
-system. It plans, dispatches implementation tasks to workers on the best provider (gusdecool-load-balancer rules), watches
+The session the dispatcher starts is an orchestrator, an extension of the existing `gusdecool-load-balancer` skill,
+not a new
+system. It plans, dispatches implementation tasks to workers on the best provider (gusdecool-load-balancer rules),
+watches
 them, and takes over on another provider when one is stuck, until the ticket reaches QA or HITL.
 
 ## Decisions (from the user)
@@ -42,9 +44,11 @@ them, and takes over on another provider when one is stuck, until the ticket rea
 2. `pick-provider --orchestrator`: picks only claude, and only when it is under its reserved cutoffs. `board-precheck`
    uses it, so a run never starts when the orchestrator itself has no quota. Why: Claude's buffer is the reserved
    cutoff.
-3. Skill text: `gusdecool-board-worker` step 4 becomes orchestrate-and-watch for plans of two or more tasks; the stop clock
+3. Skill text: `gusdecool-board-worker` step 4 becomes orchestrate-and-watch for plans of two or more tasks; the
+  stop clock
    is 180 minutes (takeovers add time); the orchestrator posts an issue comment on every task finish, every takeover
-   and at least hourly, because the 2-hour reaper reads issue and PR activity. `gusdecool-load-balancer` gains the screen-text
+   and at least hourly, because the 2-hour reaper reads issue and PR activity. `gusdecool-load-balancer` gains the
+   screen-text
    and human-prompt signals and the 10-minute interval.
 4. The dispatcher prompt calls `pick-provider --orchestrator`. Applied to the Orca automation after merge and
    `npx skills update -g`.

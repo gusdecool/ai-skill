@@ -7,26 +7,26 @@ that read the shared skills folder.
 
 | Skill | Use case | Details |
 |---|---|---|
-| `/gusdecool:board-issue` | Write a board-ready issue (final spec, optional Auto merge) | [SKILL.md][board-issue] |
-| `/gusdecool:board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][board-worker] |
+| `gusdecool-board-issue` | Write a board-ready issue (final spec, Auto merge) | [SKILL.md][gusdecool-board-issue] |
+| `gusdecool-board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][gusdecool-board-worker] |
 | `/gusdecool:git-workflow` | Git rules: branches, commits, PRs, CI, project board | [SKILL.md][git-workflow] |
-| `/gusdecool:load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][load-balancer] |
-| `/gusdecool:mysql-branch` | MySQL branching: one database per git branch / worktree | [SKILL.md][mysql-branch] |
+| `gusdecool-load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][gusdecool-load-balancer] |
+| `gusdecool-mysql-branch` | MySQL branching: one database per git branch | [SKILL.md][gusdecool-mysql-branch] |
 
 In Claude Code the skill is `/gusdecool:<name>`. In other agents, say its name, for example "use MySQL branch".
 
-[board-issue]: skills/board-issue/SKILL.md
-[board-worker]: skills/board-worker/SKILL.md
+[gusdecool-board-issue]: skills/gusdecool-board-issue/SKILL.md
+[gusdecool-board-worker]: skills/gusdecool-board-worker/SKILL.md
 [git-workflow]: skills/gusdecool-git-workflow/SKILL.md
-[load-balancer]: skills/load-balancer/SKILL.md
-[mysql-branch]: skills/mysql-branch/SKILL.md
+[gusdecool-load-balancer]: skills/gusdecool-load-balancer/SKILL.md
+[gusdecool-mysql-branch]: skills/gusdecool-mysql-branch/SKILL.md
 
 ## Board worker config
 
-`board-worker` names no organization. On first use it asks for the owner of your GitHub Project, the project number
-and the repo owners it may merge in, and saves them in `~/.config/board-worker/config` (run
-`~/.agents/skills/board-worker/scripts/board-setup` to create or change it). The scheduled dispatcher never creates it:
-without the file its precheck skips the run with one line.
+`gusdecool-board-worker` names no organization. On first use it asks for the owner of your GitHub Project, the project
+number and the repo owners it may merge in, and saves them in `~/.config/board-worker/config` (run
+`~/.agents/skills/gusdecool-board-worker/scripts/board-setup` to create or change it). The scheduled dispatcher never
+creates it: without the file its precheck skips the run with one line.
 
 ## Merge gate and flags
 
@@ -47,8 +47,8 @@ All flags live in `~/.config/board-worker/config`, which the worker must never e
 
 ## UAT section convention
 
-The `board-worker` skill reads each repo's README to learn how its UAT works. Add a `## UAT` section whose first line
-is one of these forms:
+The `gusdecool-board-worker` skill reads each repo's README to learn how its UAT works. Add a `## UAT` section whose
+first line is one of these forms:
 
 ```
 ## UAT
@@ -115,7 +115,7 @@ To update later, run `npx skills update` (Option A),
 `/plugin marketplace update gusdecool` (Option B)
 or `codex plugin marketplace upgrade` (Option C).
 
-## mysql-branch
+## gusdecool-mysql-branch
 
 ### Why
 
@@ -194,7 +194,7 @@ Branches that exist only on the remote show as stale.
 
 ```
 bash tests/check-structure.sh
-bash tests/mysql-branch.test.sh
+bash tests/gusdecool-mysql-branch.test.sh
 ```
 
 The integration tests start a throwaway `mysql:8.0` container and remove it at the end. Docker is required.

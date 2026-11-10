@@ -571,8 +571,8 @@ assert_eq "a Jira error on the POST prints the Jira line only" \
 reset_curl '404|{"errorMessages":["Issue does not exist or you do not have permission to see it."]}'
 bash "$SETSTATUS" BM-999 Done 2>"$STUB_DIR/err"
 assert_eq "an unknown ticket exits 2 on the Jira 404" "2" "$?"
-assert_eq "an unknown ticket prints the Jira line only" \
-  "gusdecool-board-worker: Jira HTTP 404: Issue does not exist or you do not have permission to see it." "$(cat "$STUB_DIR/err")"
+JIRA404="gusdecool-board-worker: Jira HTTP 404: Issue does not exist or you do not have permission to see it."
+assert_eq "an unknown ticket prints the Jira line only" "$JIRA404" "$(cat "$STUB_DIR/err")"
 
 echo "Pick provider"
 cat >"$STUB_DIR/orca" <<'STUB'
