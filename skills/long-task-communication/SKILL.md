@@ -1,6 +1,6 @@
 ---
 name: long-task-communication
-description: Use when a task will take more than about 10 minutes, when a task leaves two or more follow-up steps for the user, or when a step is blocked by a limit that lifts on its own. State the estimate first, publish a follow-up checklist artifact, and ask once with options before waiting out a limit.
+description: Use when a task will take more than about 20 minutes, when a task leaves two or more follow-up steps for the user, or when a step is blocked by a limit that lifts on its own. State the estimate first, publish a follow-up checklist artifact, and ask once with options before waiting out a limit.
 ---
 
 # Long task communication
