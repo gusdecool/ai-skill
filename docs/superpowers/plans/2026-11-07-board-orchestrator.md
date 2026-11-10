@@ -7,17 +7,17 @@
 provider when one hits a limit.
 
 **Architecture:** A model-free `board-watch` script reports stuck or settled workers; the orchestrator (the existing
-`BOARD-WORKER` session) reacts using the `load-balancer` takeover rules. `pick-provider --orchestrator` keeps the
+`BOARD-WORKER` session) reacts using the `gusdecool-load-balancer` takeover rules. `pick-provider --orchestrator` keeps the
 orchestrator on Claude within its reserved cutoff.
 
-**Tech Stack:** bash, jq, the `orca` CLI; tests in `tests/board-worker.test.sh`.
+**Tech Stack:** bash, jq, the `orca` CLI; tests in `tests/gusdecool-board-worker.test.sh`.
 
 **Spec:** `docs/superpowers/specs/2026-11-07-board-orchestrator-design.md`
 
 ## Global Constraints
 
 - Lines at most 120 characters. Every function has a doc comment. Scripts executable. No live API calls in tests.
-- Cutoffs are the load-balancer's: 90 session / 95 weekly, reserved claude 80 / 75.
+- Cutoffs are the gusdecool-load-balancer's: 90 session / 95 weekly, reserved claude 80 / 75.
 - `board-watch` exits 0 `settled`, 1 `stuck`, 2 cannot read.
 
 ## Review Focus
@@ -32,9 +32,9 @@ orchestrator on Claude within its reserved cutoff.
 ### Task 1: board-watch script (judgment)
 
 **Files:**
-- Create: `skills/board-worker/scripts/orca-lib.sh`, `skills/board-worker/scripts/board-watch`
-- Modify: `skills/board-worker/scripts/pick-provider` (use `orca_bin` from the lib)
-- Test: `tests/board-worker.test.sh` (new "Board watch" section)
+- Create: `skills/gusdecool-board-worker/scripts/orca-lib.sh`, `skills/gusdecool-board-worker/scripts/board-watch`
+- Modify: `skills/gusdecool-board-worker/scripts/pick-provider` (use `orca_bin` from the lib)
+- Test: `tests/gusdecool-board-worker.test.sh` (new "Board watch" section)
 
 **Interfaces:**
 - Produces: `orca_bin()` in `orca-lib.sh` (prints the orca binary: `ORCA_BIN`, else `orca` on PATH, else
@@ -47,7 +47,7 @@ orchestrator on Claude within its reserved cutoff.
   tail with "You've hit your usage limit ... try again at 3:13 PM" exits 1 `limit_text`; the same phrase 20 lines
   up does not flag; codex session 90 flags `quota_cutoff`, codex 89 does not; claude session 80 flags;
   identical tail on two polls with `SILENT_SECONDS=0` flags `silent`; failing `worker-show` exits 2.
-- [x] **Step 2: Run them, expect FAIL** (`bash tests/board-worker.test.sh 2>&1 | grep '^FAIL'`).
+- [x] **Step 2: Run them, expect FAIL** (`bash tests/gusdecool-board-worker.test.sh 2>&1 | grep '^FAIL'`).
 - [x] **Step 3: Implement** `orca-lib.sh` and `board-watch`; per-worker silence state kept in a temp dir (macOS bash
   3 has no associative arrays); quota cutoff logic copied from `pick-provider`.
 - [x] **Step 4: Point `pick-provider` at `orca_bin`** from the lib; its existing tests stay green.
@@ -57,8 +57,8 @@ orchestrator on Claude within its reserved cutoff.
 ### Task 2: pick-provider --orchestrator and precheck (mechanical)
 
 **Files:**
-- Modify: `skills/board-worker/scripts/pick-provider`, `skills/board-worker/scripts/board-precheck`
-- Test: `tests/board-worker.test.sh` ("Pick provider" section)
+- Modify: `skills/gusdecool-board-worker/scripts/pick-provider`, `skills/gusdecool-board-worker/scripts/board-precheck`
+- Test: `tests/gusdecool-board-worker.test.sh` ("Pick provider" section)
 
 **Interfaces:**
 - Consumes: `pick-provider` fixtures (`run_provider`, `tweak_accounts`).
@@ -77,14 +77,14 @@ orchestrator on Claude within its reserved cutoff.
 ### Task 3: skill text and dispatcher prompt (mechanical)
 
 **Files:**
-- Modify: `skills/board-worker/SKILL.md`, `skills/load-balancer/SKILL.md`
+- Modify: `skills/gusdecool-board-worker/SKILL.md`, `skills/gusdecool-load-balancer/SKILL.md`
 - Modify (idea repo, separate PR): `docs/orca-kanban-automation.md`
 
-- [x] **Step 1: `board-worker/SKILL.md`:** add `board-watch` to the scripts list; step 4 orchestrates for two or more
+- [x] **Step 1: `gusdecool-board-worker/SKILL.md`:** add `board-watch` to the scripts list; step 4 orchestrates for two or more
   tasks (dispatch with `worker-start --worktree current`, run `board-watch` in the background, on `stuck` follow the
-  load-balancer takeover, on `settled` check the work, release workers); one-task plans stay inline; heartbeat
+  gusdecool-load-balancer takeover, on `settled` check the work, release workers); one-task plans stay inline; heartbeat
   comment on each task finish, takeover and at least hourly; clock 180 minutes; only the orchestrator merges.
-- [x] **Step 2: `load-balancer/SKILL.md`:** the watch uses screen text and a human-prompt signal besides quota and
+- [x] **Step 2: `gusdecool-load-balancer/SKILL.md`:** the watch uses screen text and a human-prompt signal besides quota and
   silence; interval 10 minutes; never choose "switch model" on a provider prompt; the Orca adapter names `board-watch`.
 - [x] **Step 3: Run `bash tests/check-structure.sh` and the full test file, expect 0 FAIL.**
 - [x] **Step 4: Commit,** push, open the `ai-skill` PR (`Refs` the issue if one exists), watch CI.

@@ -6,7 +6,7 @@
 **Goal:** The board dispatcher builds blocking tickets first and reminds the owner when a blocker is not queued.
 
 **Architecture:** Jira `Blocks` links are the source of truth. `board-ticket-cli` creates and lists them,
-`board-pick-next` walks them before taking a ticket, `board-issue` asks for them when a ticket is written.
+`board-pick-next` walks them before taking a ticket, `gusdecool-board-issue` asks for them when a ticket is written.
 
 **Tech Stack:** bash, jq, the curl stub in `tests/stubs`.
 
@@ -32,7 +32,7 @@
 ### Task 1: board-ticket-cli link and blockers (judgment)
 
 **Files:**
-- Modify: `skills/board-worker/scripts/board-ticket-cli`
+- Modify: `skills/gusdecool-board-worker/scripts/board-ticket-cli`
 - Test: `tests/board-ticket-cli.test.sh`
 
 **Interfaces:**
@@ -50,8 +50,8 @@
 ### Task 2: board-pick-next honors blockers (judgment)
 
 **Files:**
-- Modify: `skills/board-worker/scripts/board-pick-next`
-- Test: `tests/board-worker.test.sh` (section "Pick next")
+- Modify: `skills/gusdecool-board-worker/scripts/board-pick-next`
+- Test: `tests/gusdecool-board-worker.test.sh` (section "Pick next")
 
 **Interfaces:**
 - Consumes: the Todo search now also returns `issuelinks`.
@@ -68,13 +68,13 @@
 ### Task 3: skill text (mechanical)
 
 **Files:**
-- Modify: `skills/board-issue/SKILL.md`, `skills/board-worker/SKILL.md`, `skills/board-worker/scripts/board-pick-next`
+- Modify: `skills/gusdecool-board-issue/SKILL.md`, `skills/gusdecool-board-worker/SKILL.md`, `skills/gusdecool-board-worker/scripts/board-pick-next`
   header comment
 
-- [x] **Step 1: board-issue**: in step 2 ask which tickets block the new one (options from the open tickets of the
+- [x] **Step 1: gusdecool-board-issue**: in step 2 ask which tickets block the new one (options from the open tickets of the
   same epic or repo, none as the default); in step 7 run `board-ticket-cli link <key> blocked-by <blocker>` for each;
   in step 9 report them. Add the dependency note to the draft template under Constraints.
-- [x] **Step 2: board-worker**: describe the dispatcher rule in one short paragraph (workers still use only the four
+- [x] **Step 2: gusdecool-board-worker**: describe the dispatcher rule in one short paragraph (workers still use only the four
   subcommands).
 - [x] **Step 3: Run all tests and `bash tests/check-structure.sh`; check no line exceeds 120 characters.**
 - [x] **Step 4: Commit, push, open the PR (base `refactor/board-ticket-cli`), watch CI.**
