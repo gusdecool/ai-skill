@@ -1273,5 +1273,39 @@ assert_eq "setup --stats-fields creates the missing field and adds all three to 
   "$CODE $(grep -c 'created field Agent minutes' <<<"$OUT") \
 $(grep -c 'POST .*screens/10068/tabs/7/fields' "$STUB_DIR/curl-calls")"
 
+# The plan gate uses an isolated working directory and fake Jira comments.
+PLAN_GATE="$REPO/skills/board-worker/scripts/board-plan-check"
+PLAN_DIR="$STUB_DIR/work/docs/superpowers/plans"
+mkdir -p "$PLAN_DIR"
+# Runs the gate from the fake repository and captures its result and one-line diagnostic.
+run_plan_gate() {
+  ERR="$(cd "$STUB_DIR/work" && bash "$PLAN_GATE" BM-1 2>&1)"; CODE=$?
+}
+run_plan_gate
+assert_eq "missing plan blocks" "1 1" "$CODE $(grep -c . <<<"$ERR")"
+printf '### Task 1: One\n' >"$PLAN_DIR/2026-11-10-BM-1-test.md"
+run_plan_gate
+assert_eq "untagged task blocks" "1" "$CODE"
+printf '### Task 1: One (mechanical)\n' >"$PLAN_DIR/2026-11-10-BM-1-test.md"
+run_plan_gate
+assert_eq "one tagged task needs no comment" "0" "$CODE"
+printf '### Task 2: Two (judgment)\n' >>"$PLAN_DIR/2026-11-10-BM-1-test.md"
+reset_curl '200|{"comments":[],"startAt":0,"maxResults":100,"total":0}'
+run_plan_gate
+assert_eq "two tasks need a dispatch comment" "1" "$CODE"
+reset_curl '200|{"comments":[{"body":"Dispatch: selected"}],"total":1}'
+run_plan_gate
+assert_eq "dispatch comment passes" "0" "$CODE"
+reset_curl '200|{"comments":[{"body":"other"}],"startAt":0,"maxResults":1,"total":2}' \
+  '200|{"comments":[{"body":"Dispatch: selected"}],"startAt":1,"maxResults":1,"total":2}'
+run_plan_gate
+assert_eq "later comment pages are checked" "0" "$CODE"
+reset_curl '500|{}'
+run_plan_gate
+assert_eq "unreadable comments block with one line" "1 1" "$CODE $(grep -c . <<<"$ERR")"
+printf '### Task 3: Three\n' >>"$PLAN_DIR/2026-11-10-BM-1-test.md"
+run_plan_gate
+assert_eq "any untagged task blocks" "1" "$CODE"
+
 if [ "$FAILS" -eq 0 ]; then echo "All board-worker tests passed"; fi
 exit "$FAILS"
