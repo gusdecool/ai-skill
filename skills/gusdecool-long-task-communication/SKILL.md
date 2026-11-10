@@ -11,7 +11,7 @@ once (with options) before waiting out a limit.
 
 ## State the estimate first
 
-Before starting a long task — one you expect to take more than about 10 minutes: a multi-step plan, a big refactor,
+Before starting a long task — one you expect to take more than about 20 minutes: a multi-step plan, a big refactor,
 a long test or build run — say how long you expect it to take and at what clock time it will be done. Base the
 estimate on the plan's steps. Mark it as an estimate, not a promise. If it slips by more than about a third, say so
 with the new finish time.
@@ -33,7 +33,7 @@ further check-ins" skip it.
 
 ### Self-check before the first edit
 
-Before the first edit of every task, ask: "Is this over about 10 minutes, and did I already state the estimate?" If
+Before the first edit of every task, ask: "Is this over about 20 minutes, and did I already state the estimate?" If
 not, stop and state it first. If you notice you skipped it, give it at once with the current elapsed time and the
 new finish time, and say you skipped it.
 
