@@ -1,5 +1,5 @@
 ---
-name: git-workflow
+name: gusdecool-git-workflow
 description: Use when committing, branching, creating or removing a worktree, pushing, opening or merging a pull request, watching CI, or touching a GitHub issue or project board card. Covers task branches, commit message rules, never merging without the user's word in the conversation, and project-board steps driven by a local config file.
 ---
 
@@ -20,14 +20,15 @@ Rules for how to work with git, pull requests, and the optional project board. T
   created through the `orca-cli` skill, not plain git, and merged afterwards.
 - Never delete, or ask the user to delete, a worktree that holds uncommitted work. Commit it or list what is
   uncommitted first.
-- Branch names: `type/short-description` (for example `feat/booking-widget`, `fix/payment-retry`).
+- Branch names: use the ticket number when there is one, as `<ticket>-short-description` (the same number as the
+  commit prefix), otherwise `type/short-description` (for example `feat/booking-widget`, `fix/payment-retry`).
 
 ## Commit messages
 
 - Imperative mood, subject under 72 characters, explain why in the body when it is not obvious.
 - Plain text. Never use `**` bold or other markdown, because GitHub shows them as raw characters.
-- If a branch is named `XXXX-something` (a task number, then a description), start every commit message with that
-  number, for example branch `3903-cleaning-codebase` gives `3903 Remove outdated repository references`.
+- If a branch is named `<ticket>-short-description` (a ticket number, then a description), start every commit message
+  with that number, for example branch `3903-cleaning-codebase` gives `3903 Remove outdated repository references`.
 
 ## Pushing and merging
 
@@ -76,6 +77,7 @@ skill.
 - When the user says a PR is merged, move the issue to the QA column (`BOARD_STATUS_QA`) of its GitHub Project
   (Status field) with `gh project item-edit`, check the deploy, and leave the issue open. Only the user moves it to
   Done and closes it. If the repo has no project with a QA column, skip the move and say so.
-- When creating many cards or issues at once, pace the project-board calls (about one every 2 seconds, in small
-  batches) and expect GitHub's burst limit on project changes, which is separate from the hourly quota. Why: 23 cards
-  in a row hit "API rate limit exceeded" with thousands of calls still left.
+- When creating many cards or issues at once, pace the tracker calls (about one every 2 seconds, in small batches)
+  and expect the tracker's burst limit on changes, which is separate from the hourly quota. This applies to any
+  tracker with an API, GitHub Projects and Jira alike. Why: 23 cards in a row hit "API rate limit exceeded" with
+  thousands of calls still left.
