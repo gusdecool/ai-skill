@@ -61,13 +61,13 @@ Never use this skill in a session whose prompt starts with `BOARD-WORKER`: a wor
    the user answers yes in this conversation; otherwise leave it unticked. Never decide it yourself. Why: the
    checkbox is the human approval that the merge gate checks.
 7. **Create.** Show the final text and get an OK, then run
-   `~/.agents/skills/board-worker/scripts/board-ticket create --summary <title> --component <owner/repo>
+   `~/.agents/skills/board-worker/scripts/board-ticket-cli create --summary <title> --component <owner/repo>
    --description-file <draft> --priority <priority>`. The component is the repo as `owner/repo`. It prints
    `{"key","url"}`. The ticket starts in Backlog, never Todo. Only if the user said yes in step 6, then run
-   `board-ticket automerge <key>`.
+   `board-ticket-cli automerge <key>`.
 8. **Status.** Leave it in Backlog. Move it to Todo (`board-set-status <key> Todo`) only if the user says to queue it
    now, or answers yes when you ask. Why: Todo starts the worker within 10 minutes, so it is the user's go signal.
-   Before moving any existing ticket to Todo, read it with `board-ticket view <key>`. If `autoMerge` is not `true`,
-   ask the step 6 question first, default no, and on yes run `board-ticket automerge <key>`. Why: an unticked box is a
-   silent no, and the user should decide it once, not discover an unmerged PR later.
+   Before moving any existing ticket to Todo, read it with `board-ticket-cli view <key>`. If `autoMerge` is not `true`,
+   ask the step 6 question first, default no, and on yes run `board-ticket-cli automerge <key>`. Why: an unticked box
+   is a silent no, and the user should decide it once, not discover an unmerged PR later.
 9. **Report** the ticket URL, the status, the Auto merge value and any warning from step 5.

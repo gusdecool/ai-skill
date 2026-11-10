@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Tests for board-ticket, with curl replaced by the stub in tests/stubs. No network is used and the real Jira config
+# Tests for board-ticket-cli, with curl replaced by the stub in tests/stubs. No network is used and the real Jira config
 # is never read: a fake config with a fake token is used.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TICKET="$REPO/skills/board-worker/scripts/board-ticket"
+TICKET="$REPO/skills/board-worker/scripts/board-ticket-cli"
 export BOARD_WORKER_CONFIG="$REPO/tests/fixtures/board/config"
 export STUB_DIR
 STUB_DIR="$(mktemp -d)"
@@ -32,7 +32,7 @@ reset_curl() {
   for r in "$@"; do printf '%s\n' "$r" >>"$STUB_DIR/curl-responses"; done
 }
 
-# Runs board-ticket with the given arguments; stdout goes to OUT, stderr to ERR, the exit code to CODE.
+# Runs board-ticket-cli with the given arguments; stdout goes to OUT, stderr to ERR, the exit code to CODE.
 # shellcheck disable=SC2034 # OUT, ERR and CODE are read by the assertions
 run() {
   OUT="$(bash "$TICKET" "$@" 2>"$STUB_DIR/err")"
@@ -208,5 +208,5 @@ assert_eq "a Jira error exits 2" "2" "$CODE"
 assert_eq "the token is never printed" "0" "$(grep -c 'FAKE-TOKEN' <<<"$OUT$ERR")"
 assert_eq "the token is not in the curl arguments" "0" "$(grep -c 'FAKE-TOKEN' "$STUB_DIR/curl-argv")"
 
-if [ "$FAILS" -eq 0 ]; then echo "All board-ticket tests passed"; fi
+if [ "$FAILS" -eq 0 ]; then echo "All board-ticket-cli tests passed"; fi
 exit "$FAILS"
