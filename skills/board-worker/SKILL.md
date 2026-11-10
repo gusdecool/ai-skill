@@ -129,7 +129,10 @@ stop (see "Stopping").
      same task to the next eligible provider at the same tier). Never answer a provider prompt such as "switch to
      another model" with "switch", and never move up to a High or Ultra model. If every provider is over a cutoff, stop
      (see Stopping) and put the earliest reset time in the comment.
-   - A plan with one task is implemented by you, inline, after `board-plan-check <ticket-key>` exits 0.
+   - A plan with one task is implemented by you, inline, after `board-plan-check <ticket-key>` exits 0, only while
+     your provider is under its reserved cutoffs (80 session, 75 weekly). Over them, dispatch the task to another
+     provider like any other and keep only planning, checks and the final review for yourself: your quota is for
+     orchestrating and review, not for writing code.
    - Post a ticket comment at every task finish and every takeover, and at least once an hour while waiting. This
      keeps the dispatcher's 2-hour stale clock from reaping the ticket while workers run.
    Only you merge, and only as "Merge permission" allows; sub-workers never merge.

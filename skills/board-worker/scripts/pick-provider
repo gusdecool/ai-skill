@@ -3,7 +3,9 @@
 # Usage: pick-provider [--tier Low|Mid|High|Ultra] [--orchestrator]
 # A provider whose models.md cell for the tier is `none` is skipped; the tier is never swapped. Only the Mid model ids
 # are held here, so another tier with a model in the table exits 2 until its id is added.
-# --orchestrator considers only claude (the session that runs the ticket) and needs it under its reserved cutoffs.
+# --orchestrator considers only claude (the session that runs the ticket) and needs it under 90 in both windows.
+# The reserved 80 / 75 cutoffs do not apply to it: they only keep claude off implementation work, and an orchestrator
+# over them still plans, delegates to other providers and reviews (load-balancer skill, "Pause").
 # Prints {"provider","model","tier"} and exits 0, or {"error","earliestResetsAt"} and exits 1 when every provider is
 # over a cutoff or unavailable. Exits 2 when quotas cannot be read.
 # Rules and numbers are copied from skills/load-balancer/SKILL.md: cutoffs 90 session / 95 weekly (80 / 75 for the
@@ -54,8 +56,9 @@ accounts="$("$(orca_bin)" account list --json)" || { echo "pick-provider: cannot
 now_ms="${NOW_MS:-$(($(date +%s) * 1000))}"
 
 # Keep only the three known providers, in listed order, scored; blocked ones carry the time they free up.
-result="$(jq -c --argjson now "$now_ms" '
-  def cutoffs($p): if $p == "claude" then {session: 80, weekly: 75} else {session: 90, weekly: 95} end;
+result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" '
+  def cutoffs($p): if $p == "claude" and ($orch | not) then {session: 80, weekly: 75}
+    elif $p == "claude" then {session: 90, weekly: 90} else {session: 90, weekly: 95} end;
   def urgency($w): (100 - $w.usedPercent)
     / ([($w.resetsAt - $now) / ($w.windowMinutes * 60000), 0.05] | max);
   [.result.rateLimits | to_entries[] | select(.key | IN("claude", "codex", "antigravity"))
