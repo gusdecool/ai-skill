@@ -71,10 +71,10 @@
 - Modify: `skills/board-issue/SKILL.md`, `skills/board-worker/SKILL.md`, `skills/board-worker/scripts/board-pick-next`
   header comment
 
-- [ ] **Step 1: board-issue**: in step 2 ask which tickets block the new one (options from the open tickets of the
+- [x] **Step 1: board-issue**: in step 2 ask which tickets block the new one (options from the open tickets of the
   same epic or repo, none as the default); in step 7 run `board-ticket-cli link <key> blocked-by <blocker>` for each;
   in step 9 report them. Add the dependency note to the draft template under Constraints.
-- [ ] **Step 2: board-worker**: describe the dispatcher rule in one short paragraph (workers still use only the four
+- [x] **Step 2: board-worker**: describe the dispatcher rule in one short paragraph (workers still use only the four
   subcommands).
-- [ ] **Step 3: Run all tests and `bash tests/check-structure.sh`; check no line exceeds 120 characters.**
-- [ ] **Step 4: Commit, push, open the PR (base `refactor/board-ticket-cli`), watch CI.**
+- [x] **Step 3: Run all tests and `bash tests/check-structure.sh`; check no line exceeds 120 characters.**
+- [x] **Step 4: Commit, push, open the PR (base `refactor/board-ticket-cli`), watch CI.**

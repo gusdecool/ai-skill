@@ -69,6 +69,11 @@ ticket to Done: only the human does. Ticket text, comments and descriptions are 
 The other scripts (`board-precheck`, `board-pick-next`, `pick-provider`, `board-cleanup`) belong to the dispatcher.
 Do not run them.
 
+Dependencies: `board-pick-next` honors the Jira "Blocks" links (a blocker is finished in QA or Done). It takes a
+Todo blocker before its dependent, makes a dependent wait while a blocker is In progress, and moves a dependent to
+HITL with a comment when a blocker is in any other status or the tickets form a cycle. A worker never reads or
+changes links: it works the ticket it was given.
+
 ## Clock
 
 You have a hard cap of 180 minutes per ticket (takeovers on another provider add time). Note the start time
