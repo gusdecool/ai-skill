@@ -2,7 +2,7 @@
 # Decides whether the board worker should start a new worker now.
 # Usage: board-precheck
 # Exits 0 only when a pick-able Todo ticket exists, fewer than 2 tickets are In progress (after reaping stale ones)
-# and pick-provider --orchestrator exits 0 (claude, the orchestrator, has quota). Otherwise exits 1 with one line on
+# and pick-provider --orchestrator exits 0 (claude, the orchestrator, is under 90). Otherwise exits 1 with one line on
 # stderr naming the failed condition; 2 on a Jira or script failure.
 # Reaper: an In progress ticket with no ticket or linked PR activity for 2 hours moves to HITL and
 # gets a comment with the last activity time, the 2-hour rule and the last PR seen.

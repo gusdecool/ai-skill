@@ -642,11 +642,18 @@ OUT="$(run_provider "$STUB_DIR/accounts.json" --orchestrator)"
 CODE=$?
 assert_eq "--orchestrator picks claude even when codex scores higher" "claude 0" "$(jq -r .provider <<<"$OUT") $CODE"
 
-tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rateLimits.claude.session.usedPercent = 80
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 77 | .result.rateLimits.claude.session.usedPercent = 85'
+OUT="$(run_provider "$STUB_DIR/accounts.json" --orchestrator)"
+CODE=$?
+assert_eq "--orchestrator allows claude over the reserved cutoffs" "claude 0" "$(jq -r .provider <<<"$OUT") $CODE"
+OUT="$(run_provider "$STUB_DIR/accounts.json")"
+assert_eq "without the flag claude over the reserved cutoffs is not a worker" "codex" "$(jq -r .provider <<<"$OUT")"
+
+tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 90 | .result.rateLimits.claude.session.usedPercent = 10
   | .result.rateLimits.codex.session.usedPercent = 1'
 OUT="$(run_provider "$STUB_DIR/accounts.json" --orchestrator)"
 CODE=$?
-assert_eq "--orchestrator exits 1 when claude is over its reserved cutoff" "1" "$CODE"
+assert_eq "--orchestrator exits 1 when claude reaches 90 weekly" "1" "$CODE"
 assert_eq "--orchestrator names the error" "1" "$(jq -r 'has("error") | if . then 1 else 0 end' <<<"$OUT")"
 
 cat >"$STUB_DIR/models.md" <<'MD'
