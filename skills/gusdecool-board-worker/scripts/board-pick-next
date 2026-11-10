@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# Picks the next Todo ticket the worker should take.
+# Usage: board-pick-next [--dry-run]
+# Prints {"repo","key","url"}; exits 0, or 1 when no ticket qualifies, 2 when Jira cannot be read.
+# Order: Priority (Highest, High, Medium, Low, Lowest, none), then lowest ticket number (oldest).
+# The repo of a ticket is its single component, named owner/repo. A ticket of a repo whose owner is not allowed is
+# ignored untouched; a ticket with no valid component stays a candidate so the readiness check parks it.
+# A Todo ticket that is not ready moves to HITL, then gets a comment naming what is missing.
+# Dependencies (Jira "Blocks" links; a blocker is finished in QA or Done): a ticket whose unfinished blockers are all
+# in Todo is replaced by the first of them (walked down the chain); a blocker In progress makes the ticket wait
+# quietly; a blocker in any other status (or in a repo of a not-allowed owner) moves the ticket to HITL with a comment
+# naming it; a cycle moves every ticket in it to HITL.
+# --dry-run only skips unready tickets: it never comments, labels or moves anything.
+set -euo pipefail
+
+dry_run=0
+[ "${1:-}" != "--dry-run" ] || dry_run=1
+
+dir="$(dirname "${BASH_SOURCE[0]}")"
+source "$dir/board-lib.sh"
+
+# Prints an error and exits 2.
+die() { echo "board-pick-next: $*" >&2; exit 2; }
+
+# Prints the Todo tickets of allowed owners (and of unknown repos) as JSON lines {key,repo}, best first.
+sorted_candidates() {
+  jq -c --arg allowed "$BOARD_ALLOWED_OWNERS" '
+    def rank: {"Highest": 0, "High": 1, "Medium": 2, "Low": 3, "Lowest": 4}[.fields.priority.name // ""] // 5;
+    def repo: if (.fields.components | type) == "array" and (.fields.components | length) == 1
+        and ((.fields.components[0].name // "") | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"))
+      then .fields.components[0].name else "" end;
+    [.[] | {key: .key, repo: repo, rank: rank, number: (.key | sub("^.*-"; "") | tonumber)}
+     | select(.repo == "" or (.repo | split("/")[0] | IN($allowed | split(",")[])))]
+    | sort_by([.rank, .number])
+    | .[] | {key, repo}' <<<"$1"
+}
+
+# Tickets moved to HITL during this run, as " KEY KEY ". They count as HITL for the rest of the run.
+PARKED=" "
+
+# Moves a ticket the worker will not take to HITL, then comments on it. Args: key, reason.
+# The move comes first so a failed move cannot repeat the comment on every tick.
+park_ticket() {
+  local body
+  "$dir/board-set-status" "$1" HITL || die "cannot park $1"
+  body="$(jq -nc --arg t "$2 Moved to HITL." '{body: $t}')" || die "cannot park $1"
+  jira_api POST "/rest/api/2/issue/$1/comment" "$body" >/dev/null || die "cannot park $1"
+  PARKED="$PARKED$1 "
+}
+
+# Prints the repo (owner/repo) of a Todo ticket from the listing, or nothing when it has no single valid component.
+ticket_repo() {
+  jq -r --arg k "$1" '.[] | select(.key == $k) | .fields.components
+    | if type == "array" and length == 1 and ((.[0].name // "") | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"))
+      then .[0].name else empty end' <<<"$items"
+}
+
+# Prints the unfinished blockers of a ticket as [{key,status}]: "Blocks" links where it is the blocked one, minus
+# blockers in QA or Done. A blocker parked during this run counts as HITL.
+open_blockers() {
+  jq -c --arg k "$1" --arg parked "$PARKED" '
+    [.[] | select(.key == $k) | (.fields.issuelinks // [])[]
+     | select(.type.name == "Blocks" and .inwardIssue != null) | .inwardIssue
+     | .key as $bk
+     | {key: $bk, status: (if ($parked | contains(" " + $bk + " ")) then "HITL" else (.fields.status.name // "") end)}
+     | select(.status != "QA" and .status != "Done")]' <<<"$items"
+}
+
+# Exits 0 when the ticket belongs to a repo owner in BOARD_ALLOWED_OWNERS, or has no valid repo (the readiness check
+# parks that one). Arg: key.
+owner_allowed() {
+  local repo
+  repo="$(ticket_repo "$1")"
+  [ -z "$repo" ] || [[ ",$BOARD_ALLOWED_OWNERS," == *",${repo%%/*},"* ]]
+}
+
+# Decides what to do with a ticket, following its Todo blockers. Args: key, path (the tickets walked so far).
+# Prints one line: "READY|key" (take it), "WAIT" (a blocker is In progress), "PARK|key|reason" (the ticket moves
+# to HITL) or "CYCLE|keys" (those tickets block each other).
+resolve() {
+  local key="$1" path="$2" blockers bad="" b first padded rest
+  padded=" $path "
+  if [[ "$padded" == *" $key "* ]]; then
+    rest="${padded#* $key }"
+    echo "CYCLE|$key ${rest% }"
+    return
+  fi
+  blockers="$(open_blockers "$key")" || die "cannot read the links of $key"
+  if [ "$(jq 'length' <<<"$blockers")" -eq 0 ]; then echo "READY|$key"; return; fi
+  bad="$(jq -r '[.[] | select(.status != "Todo" and .status != "In progress") | "\(.key) (\(.status))"]
+    | join(", ")' <<<"$blockers")"
+  # A Todo blocker that is not in the listing, or in a repo the worker may not touch, is as good as not queued.
+  for b in $(jq -r '.[] | select(.status == "Todo") | .key' <<<"$blockers"); do
+    if ! jq -e --arg k "$b" 'any(.[]; .key == $k)' <<<"$items" >/dev/null || ! owner_allowed "$b"; then
+      bad="${bad:+$bad, }$b (Todo, not workable by the board worker)"
+    fi
+  done
+  if [ -n "$bad" ]; then
+    echo "PARK|$key|Blocked by $bad. Queue or finish the blocker first, then move this ticket back to Todo."
+    return
+  fi
+  if jq -e 'any(.[]; .status == "In progress")' <<<"$blockers" >/dev/null; then echo "WAIT"; return; fi
+  first="$(jq -r 'map(.key) | sort_by(sub("^.*-"; "") | tonumber) | .[0]' <<<"$blockers")"
+  resolve "$first" "${path:+$path }$key"
+}
+
+jira_load_config || exit 2
+# On failure the search prints only its error line, which goes into the message.
+items="$(jira_search "project = $JIRA_PROJECT AND status = \"Todo\"" \
+  "summary,priority,components,labels,created,issuelinks" 2>&1)" \
+  || die "cannot list the Todo tickets: ${items//$'\n'/ }"
+candidates="$(sorted_candidates "$items")" || die "cannot sort the Todo tickets"
+# Takes the ticket if it passes the visibility and readiness checks (prints it and exits 0); otherwise parks it
+# (unless --dry-run) and returns 1. Args: key, repo.
+take_or_park() {
+  local key="$1" repo="$2" vrc=0 check
+  # Skip tickets in a repo whose visibility the config blocks (checked by script before any worker exists).
+  # An unreadable visibility is left alone: fail closed. A ticket with an unknown repo goes to the readiness check.
+  if [ -n "$repo" ]; then
+    board_visibility_blocked "$repo" || vrc=$?
+    if [ "$vrc" -eq 0 ]; then
+      [ "$dry_run" -eq 1 ] || park_ticket "$key" \
+        "Ignored by the board worker: this repo's visibility is blocked by your gusdecool-board-worker config."
+      return 1
+    elif [ "$vrc" -ne 1 ]; then
+      echo "board-pick-next: skipping $key, cannot read the repo visibility" >&2
+      return 1
+    fi
+  fi
+  # Skip and handle tickets that are not ready; empty output from the check means unreadable, so leave it alone.
+  if check="$("$dir/board-check-ready" "$key")"; then
+    jq -nc --arg repo "$repo" --arg key "$key" --arg site "$JIRA_SITE" \
+      '{repo: $repo, key: $key, url: "\($site)/browse/\($key)"}'
+    exit 0
+  elif [ -n "$check" ] && [ "$dry_run" -eq 1 ]; then
+    return 1
+  elif [ -n "$check" ]; then
+    park_ticket "$key" "Not ready for the board worker. Missing: $(jq -r '.missing | join(", ")' <<<"$check")."
+  else
+    echo "board-pick-next: skipping $key, cannot read it" >&2
+  fi
+  return 1
+}
+
+while IFS= read -r ticket; do
+  [ -n "$ticket" ] || continue
+  key="$(jq -r '.key' <<<"$ticket")"
+  # Re-resolve the same ticket after a blocker was parked, so the dependent is parked in this run too.
+  while :; do
+    [[ "$PARKED" != *" $key "* ]] || break
+    res="$(resolve "$key" "")" || die "cannot resolve the dependencies of $key"
+    case "$res" in
+      READY\|*)
+        target="${res#READY|}"
+        [ "$target" = "$key" ] || echo "board-pick-next: $key waits for $target, taking $target first" >&2
+        take_or_park "$target" "$(ticket_repo "$target")" || true
+        # Not taken. If the blocker was parked, look at the dependent again: it is blocked by a HITL ticket now.
+        [ "$target" != "$key" ] && [[ "$PARKED" == *" $target "* ]] || break
+        ;;
+      WAIT) break ;;
+      PARK\|*)
+        rest="${res#PARK|}"
+        [ "$dry_run" -eq 1 ] || park_ticket "${rest%%|*}" "${rest#*|}"
+        break
+        ;;
+      CYCLE\|*)
+        members="${res#CYCLE|}"
+        if [ "$dry_run" -eq 0 ]; then
+          for m in $members; do
+            park_ticket "$m" "Dependency cycle: ${members// / -> } -> ${members%% *}."
+          done
+        fi
+        break
+        ;;
+    esac
+  done
+done <<<"$candidates"
+exit 1

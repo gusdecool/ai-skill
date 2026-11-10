@@ -3,7 +3,7 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LIB="$REPO/skills/board-worker/scripts/board-lib.sh"
+LIB="$REPO/skills/gusdecool-board-worker/scripts/board-lib.sh"
 export BOARD_WORKER_CONFIG="$REPO/tests/fixtures/board/config"
 export STUB_DIR
 STUB_DIR="$(mktemp -d)"
@@ -123,17 +123,17 @@ write_config "'$TOKEN'"
 reset_stub '401|{}'
 run_lib 'jira_api GET /x'
 assert_eq "401 returns 2" "2" "$CODE"
-assert_eq "401 message" "board-worker: Jira token rejected (HTTP 401): create a new API token" "$ERR"
+assert_eq "401 message" "gusdecool-board-worker: Jira token rejected (HTTP 401): create a new API token" "$ERR"
 reset_stub '404|{"errorMessages":["x"]}'
 run_lib 'jira_api GET /x'
-assert_eq "404 message uses errorMessages" "board-worker: Jira HTTP 404: x" "$ERR"
+assert_eq "404 message uses errorMessages" "gusdecool-board-worker: Jira HTTP 404: x" "$ERR"
 assert_eq "404 returns 2" "2" "$CODE"
 reset_stub '400|{"errorMessages":[],"errors":{"summary":"required"}}'
 run_lib 'jira_api POST /x "{}"'
-assert_eq "400 message uses first errors value" "board-worker: Jira HTTP 400: required" "$ERR"
+assert_eq "400 message uses first errors value" "gusdecool-board-worker: Jira HTTP 400: required" "$ERR"
 reset_stub '502|not json at all'
 run_lib 'jira_api GET /x'
-assert_eq "non-JSON body falls back to its text" "board-worker: Jira HTTP 502: not json at all" "$ERR"
+assert_eq "non-JSON body falls back to its text" "gusdecool-board-worker: Jira HTTP 502: not json at all" "$ERR"
 reset_stub '204|'
 run_lib 'jira_api PUT /x "{}"'
 assert_eq "204 returns 0" "0" "$CODE"
@@ -142,7 +142,7 @@ reset_stub '200|{}'
 touch "$STUB_DIR/curl-fail"
 run_lib 'jira_api GET /x'
 assert_eq "curl failure returns 2" "2" "$CODE"
-assert_eq "curl failure prints one line" "board-worker: Jira request failed (curl error)" "$ERR"
+assert_eq "curl failure prints one line" "gusdecool-board-worker: Jira request failed (curl error)" "$ERR"
 assert_eq "token not in any error output" "0" "$(printf '%s' "$ERR" | grep -c -F "$TOKEN")"
 
 reset_stub '200|{}'

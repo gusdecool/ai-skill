@@ -4,7 +4,7 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIGRATE="$REPO/skills/board-worker/scripts/board-migrate-from-github"
+MIGRATE="$REPO/skills/gusdecool-board-worker/scripts/board-migrate-from-github"
 export BOARD_WORKER_CONFIG="$REPO/tests/fixtures/board/config"
 export STUB_DIR
 STUB_DIR="$(mktemp -d)"

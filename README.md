@@ -7,31 +7,32 @@ that read the shared skills folder.
 
 | Skill | Use case | Details |
 |---|---|---|
-| `/gusdecool:authoring-skills` | Change a skill by PR in its source repo, then install | [SKILL.md][authoring-skills] |
-| `/gusdecool:board-issue` | Write a board-ready issue (final spec, optional Auto merge) | [SKILL.md][board-issue] |
-| `/gusdecool:board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][board-worker] |
-| `/gusdecool:git-workflow` | Git rules: branches, commits, PRs, CI, project board | [SKILL.md][git-workflow] |
-| `/gusdecool:infra-conventions` | IaC, CI pinning, migrations, deploy-failure logs | [SKILL.md][infra-conventions] |
-| `/gusdecool:load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][load-balancer] |
-| `/gusdecool:long-task-communication` | Estimate, follow-ups, blocked-by-limit | [SKILL.md][long-task-communication] |
-| `/gusdecool:model-policy` | Model tier per phase of agent work | [SKILL.md][model-policy] |
-| `/gusdecool:mysql-branch` | MySQL branching: one database per git branch / worktree | [SKILL.md][mysql-branch] |
-| `/gusdecool:project-standards` | Sync stack rules into a repo's own AGENTS.md | [SKILL.md][project-standards] |
-| `/gusdecool:rest-api-design` | REST URL, contract and error rules; design first | [SKILL.md][rest-api-design] |
+| `gusdecool-authoring-skills` | Change a skill by PR in its repo, install | [SKILL.md][gusdecool-authoring-skills] |
+| `gusdecool-board-issue` | Write a board-ready issue (final spec, Auto merge) | [SKILL.md][gusdecool-board-issue] |
+| `gusdecool-board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][gusdecool-board-worker] |
+| `gusdecool-git-workflow` | Git rules: branches, commits, PRs, CI, project board | [SKILL.md][gusdecool-git-workflow] |
+| `gusdecool-infra-conventions` | IaC, CI pinning, migrations, deploy logs | [SKILL.md][gusdecool-infra-conventions] |
+| `gusdecool-load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][gusdecool-load-balancer] |
+| `gusdecool-long-task-communication` | Estimate, follow-ups, at limit | [SKILL.md][gusdecool-long-task-communication] |
+| `gusdecool-model-policy` | Model tier per phase of agent work | [SKILL.md][gusdecool-model-policy] |
+| `gusdecool-mysql-branch` | MySQL branching: one database per git branch | [SKILL.md][gusdecool-mysql-branch] |
+| `gusdecool-project-standards` | Sync stack rules into repo AGENTS.md | [SKILL.md][gusdecool-project-standards] |
+| `gusdecool-rest-api-design` | REST URL, contract, error rules; design first | [SKILL.md][gusdecool-rest-api-design] |
 
-In Claude Code the skill is `/gusdecool:<name>`. In other agents, say its name, for example "use MySQL branch".
+Every agent calls a skill by its name, for example `gusdecool-mysql-branch`. Installed as a Claude Code plugin, the
+command is `/gusdecool:gusdecool-<name>`.
 
-[authoring-skills]: skills/authoring-skills/SKILL.md
-[board-issue]: skills/board-issue/SKILL.md
-[board-worker]: skills/board-worker/SKILL.md
-[git-workflow]: skills/gusdecool-git-workflow/SKILL.md
-[infra-conventions]: skills/infra-conventions/SKILL.md
-[load-balancer]: skills/load-balancer/SKILL.md
-[long-task-communication]: skills/long-task-communication/SKILL.md
-[model-policy]: skills/model-policy/SKILL.md
-[mysql-branch]: skills/mysql-branch/SKILL.md
-[project-standards]: skills/project-standards/SKILL.md
-[rest-api-design]: skills/rest-api-design/SKILL.md
+[gusdecool-authoring-skills]: skills/gusdecool-authoring-skills/SKILL.md
+[gusdecool-board-issue]: skills/gusdecool-board-issue/SKILL.md
+[gusdecool-board-worker]: skills/gusdecool-board-worker/SKILL.md
+[gusdecool-git-workflow]: skills/gusdecool-git-workflow/SKILL.md
+[gusdecool-infra-conventions]: skills/gusdecool-infra-conventions/SKILL.md
+[gusdecool-load-balancer]: skills/gusdecool-load-balancer/SKILL.md
+[gusdecool-long-task-communication]: skills/gusdecool-long-task-communication/SKILL.md
+[gusdecool-model-policy]: skills/gusdecool-model-policy/SKILL.md
+[gusdecool-mysql-branch]: skills/gusdecool-mysql-branch/SKILL.md
+[gusdecool-project-standards]: skills/gusdecool-project-standards/SKILL.md
+[gusdecool-rest-api-design]: skills/gusdecool-rest-api-design/SKILL.md
 
 ## Config files
 
@@ -47,10 +48,10 @@ for a missing value and save the answer, and never print the file.
 
 ## Board worker config
 
-`board-worker` names no organization. On first use it asks for the owner of your GitHub Project, the project number
-and the repo owners it may merge in, and saves them in `~/.config/board-worker/config` (run
-`~/.agents/skills/board-worker/scripts/board-setup` to create or change it). The scheduled dispatcher never creates it:
-without the file its precheck skips the run with one line.
+`gusdecool-board-worker` names no organization. On first use it asks for the owner of your GitHub Project, the project
+number and the repo owners it may merge in, and saves them in `~/.config/board-worker/config` (run
+`~/.agents/skills/gusdecool-board-worker/scripts/board-setup` to create or change it). The scheduled dispatcher never
+creates it: without the file its precheck skips the run with one line.
 
 ## Merge gate and flags
 
@@ -71,8 +72,8 @@ All flags live in `~/.config/board-worker/config`, which the worker must never e
 
 ## UAT section convention
 
-The `board-worker` skill reads each repo's README to learn how its UAT works. Add a `## UAT` section whose first line
-is one of these forms:
+The `gusdecool-board-worker` skill reads each repo's README to learn how its UAT works. Add a `## UAT` section whose
+first line is one of these forms:
 
 ```
 ## UAT
@@ -122,8 +123,8 @@ Inside Claude Code:
 /plugin install gusdecool@gusdecool
 ```
 
-Plugin skills are namespaced, so the command becomes `/gusdecool:mysql-branch`. Every skill added to this repo later
-shows up as `/gusdecool:<skill-name>`.
+Plugin skills are namespaced, so the command becomes `/gusdecool:gusdecool-mysql-branch`. Every skill added to this
+repo later shows up as `/gusdecool:gusdecool-<skill-name>`.
 
 ### Option C: Codex plugin
 
@@ -134,12 +135,12 @@ codex plugin add gusdecool
 
 ### Check it works
 
-Restart or open a new agent session and ask: "what skills do you have?" You should see `mysql-branch`.
+Restart or open a new agent session and ask: "what skills do you have?" You should see `gusdecool-mysql-branch`.
 To update later, run `npx skills update` (Option A),
 `/plugin marketplace update gusdecool` (Option B)
 or `codex plugin marketplace upgrade` (Option C).
 
-## mysql-branch
+## gusdecool-mysql-branch
 
 ### Why
 
@@ -218,7 +219,7 @@ Branches that exist only on the remote show as stale.
 
 ```
 bash tests/check-structure.sh
-bash tests/mysql-branch.test.sh
+bash tests/gusdecool-mysql-branch.test.sh
 ```
 
 The integration tests start a throwaway `mysql:8.0` container and remove it at the end. Docker is required.

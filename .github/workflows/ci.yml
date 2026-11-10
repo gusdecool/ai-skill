@@ -18,4 +18,4 @@ jobs:
       - name: Structure checks
         run: bash tests/check-structure.sh
       - name: Integration tests
-        run: bash tests/mysql-branch.test.sh
+        run: bash tests/gusdecool-mysql-branch.test.sh

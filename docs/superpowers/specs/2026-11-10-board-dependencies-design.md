@@ -18,7 +18,7 @@ dispatcher honors them.
 - If an unfinished blocker is in any other status (Backlog, HITL and so on), the dependent moves to HITL with a
   comment naming the blocker, so the owner is reminded.
 - A dependency cycle moves every ticket in the cycle to HITL with a comment showing the cycle.
-- `board-issue` asks, in its single question round, which tickets block the new one, and creates the links.
+- `gusdecool-board-issue` asks, in its single question round, which tickets block the new one, and creates the links.
 - The rename of `board-ticket` to `board-ticket-cli` ships first, in its own pull request.
 
 ## Behavior
