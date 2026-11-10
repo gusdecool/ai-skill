@@ -11,7 +11,7 @@
 # Rules and numbers are copied from skills/load-balancer/SKILL.md: cutoffs 90 session / 95 weekly (80 / 75 for the
 # reserved provider, claude, which runs this skill); urgency = remaining / max(timeLeftFraction, 0.05) per window;
 # the highest window urgency is the score (the load-balancer's "+5 session points per parallel task" rule is
-# omitted: this script starts one worker at a time); a provider with neither window is dropped; scores within 5
+# omitted: this script starts one worker at a time); a provider with no window is dropped; scores within 5
 # percent tie and go to claude, then to the listed order.
 # Env: MODELS_FILE (default: global/models.md in AGENT_STANDARDS_DIR, default ~/Developer/gusdecool/agent-standards),
 # ORCA_BIN (default: orca from PATH, else ORCA_FALLBACK_BIN), ORCA_FALLBACK_BIN (default: the Orca app's bin),
@@ -55,15 +55,16 @@ models_file="${MODELS_FILE:-${AGENT_STANDARDS_DIR:-$HOME/Developer/gusdecool/age
 accounts="$("$(orca_bin)" account list --json)" || { echo "pick-provider: cannot read quotas" >&2; exit 2; }
 now_ms="${NOW_MS:-$(($(date +%s) * 1000))}"
 
-# Keep only the three known providers, in listed order, scored; blocked ones carry the time they free up.
+# Keep only the four known providers, in listed order, scored; blocked ones carry the time they free up.
 result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" '
-  def cutoffs($p): if $p == "claude" and ($orch | not) then {session: 80, weekly: 75}
-    elif $p == "claude" then {session: 90, weekly: 90} else {session: 90, weekly: 95} end;
+  def cutoffs($p): if $p == "claude" and ($orch | not) then {session: 80, weekly: 75, monthly: 75}
+    elif $p == "claude" then {session: 90, weekly: 90, monthly: 90} else {session: 90, weekly: 95, monthly: 95} end;
   def urgency($w): (100 - $w.usedPercent)
     / ([($w.resetsAt - $now) / ($w.windowMinutes * 60000), 0.05] | max);
-  [.result.rateLimits | to_entries[] | select(.key | IN("claude", "codex", "antigravity"))
-   | select(.value.status == "ok") | .key as $p | cutoffs($p) as $c
-   | [{n: "session", w: .value.session}, {n: "weekly", w: .value.weekly}] | map(select(.w != null)) as $ws
+  [.result.rateLimits | to_entries[] | select(.key | IN("claude", "codex", "antigravity", "opencodeGo"))
+   | select(.value.status == "ok") | (if .key == "opencodeGo" then "opencode" else .key end) as $p | cutoffs($p) as $c
+   | [{n: "session", w: .value.session}, {n: "weekly", w: .value.weekly}, {n: "monthly", w: .value.monthly}]
+   | map(select(.w != null)) as $ws
    | select(($ws | length) > 0)
    | ($ws | map(select(.w.usedPercent >= $c[.n]))) as $blocked
    | {provider: $p,
@@ -81,7 +82,7 @@ fi
 if [ -r "$models_file" ]; then
   kept="[]"
   for p in $(jq -r '.[].provider' <<<"$result"); do
-    case "$p" in claude) row=Claude ;; codex) row=Codex ;; antigravity) row=Gemini ;; esac
+    case "$p" in claude) row=Claude ;; codex) row=Codex ;; antigravity) row=Gemini ;; opencode) row=DeepSeek ;; esac
     if [ "$(table_cell "$row" "$tier")" = "none" ]; then
       echo "pick-provider: $p has no $tier model in models.md" >&2
     else
@@ -112,5 +113,6 @@ case "$provider" in
   claude) model="claude-sonnet-5-5" ;;
   codex) model="$(codex_model)"; [ -n "$model" ] || { echo "pick-provider: no Sol model in cache" >&2; exit 2; } ;;
   antigravity) model="gemini-3.8-flash" ;;
+  opencode) model="opencode-go/deepseek-v4-pro" ;;
 esac
 jq -nc --arg p "$provider" --arg m "$model" --arg t "$tier" '{provider: $p, model: $m, tier: $t}'
