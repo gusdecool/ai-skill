@@ -53,7 +53,7 @@ Why: lineups change every few weeks, so only that file is updated, not the rules
 ## Reasoning effort
 
 Reasoning effort is medium for every tool, model and subagent (Claude `effort`, Codex `model_reasoning_effort`, Gemini
-thinking level). Do not set it to high or max on your own: higher effort costs more and, per the AI Model Guide sheet,
+thinking level). Do not set it to high or max on your own: higher effort costs more and
 makes some models use far more tokens on long tasks. Go higher only when the user asks, or after a medium-effort
 attempt fails and the task is judgment-heavy; say so when you do. Never go below medium for planning or review.
 
