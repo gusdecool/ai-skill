@@ -138,7 +138,7 @@ mkdir -p "$STUB_DIR/home/.config/load-balancer"
 echo '{"workers":[{"provider":"codex","cutoff":0.5}]}' >"$STUB_DIR/home/.config/load-balancer/config.json"
 run "$STUB_DIR/bm55.json" --reserved claude
 assert_eq "the default path config is read" "session 62 >= 50, weekly 58 >= 50 (config)" "$(reason codex)"
-rm -r "$STUB_DIR/home"
+rm -r "${STUB_DIR:?}/home"
 
 for bad in '{not json' '{"workers":[{"provider":"opencode","cutoff":0.5}]}' \
   '{"workers":[{"provider":"codex","cutoff":50}]}' '{"main_orchestrator":"claude"}' '{"workers":{}}'; do
