@@ -33,6 +33,11 @@ Then build the template once: `scripts/mysql-branch.sh template` (add `--schema-
 3. Run `scripts/mysql-branch.sh create` (uses the current git branch; pass a name to override).
    This clones the template and points the env variable at the new database.
 4. Tell the user the database name and that the env file changed.
+5. Keep a list of every database you create in this task. Clean up at the end (see Cleanup).
+
+Need a separate test or e2e database, for example because the shared test database clashes with other sessions?
+Create it with the script (`create <name>`), never by hand with raw SQL. Why: only databases in the script's registry
+can be dropped by the script, so a hand-made one is left behind until a human notices.
 
 | Command | Use |
 |---|---|
@@ -43,13 +48,31 @@ Then build the template once: `scripts/mysql-branch.sh template` (add `--schema-
 | `list` | Show template, active and stale databases. |
 | `drop [branch] --yes` | Remove a branch database. |
 
+## Cleanup
+
+Branch databases are temporary. Drop them when the work ends, so they do not pile up as stale.
+
+When: after the PR is merged, or when the task is done or abandoned.
+
+1. Run `list` and pick only the databases you created in this task (your list from the steps above, checked against
+   the registry). Never the template, the source, or a database another branch or session uses.
+2. Consent:
+   - The user's standing instruction "use MySQL branch" counts as consent to drop the databases created for this
+     task at its end. Name the exact databases in your report.
+   - Without that instruction, ask once, naming the exact databases, then drop.
+   - A `BOARD-WORKER` run (see `gusdecool-board-worker`) drops its branch databases after the merge and before
+     it reports done.
+3. Run `drop <name> --yes` for each, then `list` and check they are gone.
+
 ## Rules
 
-- Never run `drop --yes` without the user confirming that exact database in this conversation. Without `--yes`
-  the script only reports what it would drop.
+- Run `drop --yes` only for a database you created in this task, with consent as in Cleanup (standing "use MySQL
+  branch" instruction, or the user confirming that exact database). Without `--yes` the script only reports what it
+  would drop.
 - The script only drops databases it created (it keeps a registry); do not drop databases with raw SQL.
 - Do not touch the source database or any live server. Everything runs against the local Docker MySQL.
-- Stale databases (git branch gone) are suggestions for the user, never cleaned up automatically.
+- Stale databases you did not create in this task (git branch gone) are suggestions for the user, never dropped by
+  you.
 
 ## Connection
 
