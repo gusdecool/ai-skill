@@ -19,8 +19,17 @@
 #       a JSON array [{key,status,finished}] of the tickets that block <key>; finished is true for QA and Done.
 #   board-ticket-cli stats <key>
 #       reads the JSON that board-run-stats prints from stdin, adds its minutes, tokens and cost to the number fields
-#       "Agent minutes", "Agent tokens" and "Agent cost USD", and posts its markdown as a comment. A field that does
-#       not exist is skipped with a stderr line (run board-setup --stats-fields); the comment is still posted.
+#       "Agent minutes", "Agent tokens" and "Agent cost USD", adds the model labels (provider:model) to the multi-value
+#       field "Agent models", appends the run with its per-model numbers to the Jira issue property agent.runs (not a
+#       comment, so it never mixes with human comments), and posts its markdown as a comment. A field that does not
+#       exist is skipped with a stderr line (run board-setup --stats-fields); the comment is still posted. A failure
+#       of the models field or the property only prints a stderr line.
+#   board-ticket-cli stats <key> --model <provider:model> [--model <provider:model> ...]
+#       for a worker on another provider whose usage cannot be read from logs (Codex, Gemini, OpenCode): adds the
+#       labels to "Agent models" and appends a run whose minutes, tokens and costUsd are null (unknown). Reads no
+#       stdin and changes no total.
+#   board-ticket-cli runs <key>
+#       prints the agent.runs property as a JSON array ([] when the ticket has none).
 # Keys may be a key (BM-123) or a browse URL on the configured site. Arguments are data: they are never executed and
 # JSON is built with jq. Exits 0 on success, 2 on bad arguments or a Jira error (one stderr line).
 set -euo pipefail
@@ -32,7 +41,8 @@ die() { echo "board-ticket-cli: $*" >&2; exit 2; }
 
 # Prints the usage line and exits 2.
 usage() {
-  die "usage: board-ticket-cli view|status|comment|label|create|automerge|link|blockers|stats ... (see the header of $0)"
+  die "usage: board-ticket-cli view|status|comment|label|create|automerge|link|blockers|stats|runs ... \
+(see the header of $0)"
 }
 
 # Prints the validated ticket key for an argument, or fails. Needs the Jira config loaded first.
@@ -168,14 +178,95 @@ cmd_link() {
     '{type: {name: "Blocks"}, outwardIssue: {key: $b}, inwardIssue: {key: $k}}')" >/dev/null || exit 2
 }
 
-# Adds a stats run (JSON on stdin from board-run-stats) to the ticket's three number fields and posts its markdown.
-# Field updates add to the current value, so a retried or taken-over ticket sums its runs.
+# Prints the agent.runs property of the ticket as a JSON array; [] when the ticket has none. Returns 1 with one
+# stderr line on any other Jira error, so callers never overwrite the history they could not read.
+read_runs() {
+  local out err
+  err="$(mktemp)"
+  if out="$(jira_api GET "/rest/api/2/issue/$1/properties/agent.runs" 2>"$err")"; then
+    rm -f "$err"
+    jq -ce '.value // []' <<<"$out" 2>/dev/null && return 0
+    echo "board-ticket-cli: cannot parse agent.runs of $1" >&2
+    return 1
+  fi
+  if grep -q 'HTTP 404' "$err"; then rm -f "$err"; echo '[]'; return 0; fi
+  cat "$err" >&2
+  rm -f "$err"
+  return 1
+}
+
+# Appends one run object to the agent.runs property. Keeps the newest runs when the array passes 30 KB (the Jira limit
+# is 32 KB) and puts a {truncated: true} entry first. Args: key, run JSON. Returns 1 on a Jira error.
+append_run() {
+  local key="$1" run="$2" runs merged
+  runs="$(read_runs "$key")" || return 1
+  merged="$(jq -c --argjson r "$run" '
+    def fit: if (tojson | length) > 30000 and length > 1 then .[1:] | fit else . end;
+    (any(.[]; type == "object" and .truncated == true)) as $was
+    | ([.[] | select((.truncated // false) | not)] + [$r]) as $all
+    | ($all | fit) as $kept
+    | if $was or ($kept | length) < ($all | length) then [{truncated: true}] + $kept else $kept end' <<<"$runs")" \
+    || { echo "board-ticket-cli: cannot build agent.runs for $key" >&2; return 1; }
+  jira_api PUT "/rest/api/2/issue/$key/properties/agent.runs" "$merged" >/dev/null || return 1
+}
+
+# Adds model labels (JSON array of strings) to the "Agent models" field without duplicates or removing old values.
+# Args: key, field list JSON, labels JSON. Returns 1 when the field is missing or Jira fails (one stderr line).
+add_models() {
+  local key="$1" fields="$2" labels="$3" id current merged
+  id="$(field_id_by_name "Agent models" "$fields")"
+  if [ -z "$id" ]; then
+    echo "board-ticket-cli: no custom field for: Agent models (run board-setup --stats-fields)" >&2
+    return 1
+  fi
+  current="$(jira_api GET "/rest/api/2/issue/$key?fields=$id" | jq -c --arg id "$id" '.fields[$id] // []')" || return 1
+  merged="$(jq -nc --argjson c "$current" --argjson n "$labels" '($c + $n) | unique')" || return 1
+  jira_api PUT "/rest/api/2/issue/$key" "$(jq -nc --arg id "$id" --argjson v "$merged" '{fields: {($id): $v}}')" \
+    >/dev/null || return 1
+}
+
+# Records the models of a run: the labels go to "Agent models", the run goes to agent.runs. Args: key, field list JSON,
+# run JSON as stored ({startedAt, provider, minutes, tokens, costUsd, models: [{label, ...}]}). Report-only: prints
+# stderr lines and always returns 0.
+record_models() {
+  local key="$1" fields="$2" run="$3" labels
+  labels="$(jq -c '[.models[].label] | unique' <<<"$run")"
+  if [ "$labels" != "[]" ]; then add_models "$key" "$fields" "$labels" || true; fi
+  append_run "$key" "$run" || echo "board-ticket-cli: could not update agent.runs of $key" >&2
+}
+
+# Prints the agent.runs property of the ticket (a JSON array).
+cmd_runs() {
+  read_runs "$1" || exit 2
+}
+
+# Adds a stats run to the ticket. With no --model it reads board-run-stats JSON on stdin, adds its numbers to the three
+# number fields (field updates add to the current value, so a retried or taken-over ticket sums its runs), records
+# its models and posts its markdown. With --model it records those labels with unknown numbers and reads no stdin.
 cmd_stats() {
-  local key="$1" run fields current body f name value id missing=""
+  local key="$1" run fields current body f name value id missing="" stored label provider
+  local -a extra=()
+  shift
+  while [ "$#" -gt 0 ]; do
+    [ "$#" -ge 2 ] && [ "$1" = "--model" ] || usage
+    [[ "$2" =~ ^[a-z0-9][a-z0-9._-]*:[A-Za-z0-9._-]{1,100}$ ]] || die "invalid --model (want provider:model): $2"
+    extra+=("$2")
+    shift 2
+  done
+  fields="$(jira_api GET /rest/api/2/field)" || exit 2
+  if [ "${#extra[@]}" -gt 0 ]; then
+    label="${extra[0]}"
+    provider="${label%%:*}"
+    stored="$(jq -nc --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg p "$provider" '$ARGS.positional
+      | {startedAt: $t, provider: $p, minutes: null, tokens: null, costUsd: null,
+         models: map({label: ., input: null, output: null, cacheRead: null, cacheWrite: null, costUsd: null})}' \
+      --args "${extra[@]}")"
+    record_models "$key" "$fields" "$stored"
+    return 0
+  fi
   run="$(cat)"
   jq -e '.minutes != null and .tokens != null and .costUsd != null and (.markdown | type) == "string"' \
     <<<"$run" >/dev/null 2>&1 || die "stdin is not board-run-stats output"
-  fields="$(jira_api GET /rest/api/2/field)" || exit 2
   body="{}"
   for name in "Agent minutes:minutes" "Agent tokens:tokens" "Agent cost USD:costUsd"; do
     f="${name%%:*}"
@@ -189,6 +280,11 @@ cmd_stats() {
   if [ "$body" != "{}" ]; then
     jira_api PUT "/rest/api/2/issue/$key" "$(jq -c '{fields: .}' <<<"$body")" >/dev/null || exit 2
   fi
+  # Keep only models that used tokens (a log can hold zero-usage entries) and drop the price detail.
+  stored="$(jq -c '{startedAt: (.startedAt // null), provider: (.provider // "claude"), minutes, tokens, costUsd,
+    models: [(.models // [])[] | select((.input + .output + .cacheRead + .cacheWrite) > 0)
+             | {label, input, output, cacheRead, cacheWrite, costUsd}]}' <<<"$run")"
+  record_models "$key" "$fields" "$stored"
   cmd_comment "$key" "$(jq -r '.markdown' <<<"$run")"
 }
 
@@ -197,10 +293,16 @@ cmd="$1"
 shift
 jira_load_config || exit 2
 case "$cmd" in
-  view | status | automerge | blockers | stats)
+  view | status | automerge | blockers | runs)
     [ "$#" -eq 1 ] || usage
     key="$(need_key "$1")"
     "cmd_$cmd" "$key"
+    ;;
+  stats)
+    [ "$#" -ge 1 ] || usage
+    key="$(need_key "$1")"
+    shift
+    cmd_stats "$key" "$@"
     ;;
   comment)
     [ "$#" -ge 2 ] || usage
