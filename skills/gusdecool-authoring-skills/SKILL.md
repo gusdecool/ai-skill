@@ -1,6 +1,6 @@
 ---
 name: gusdecool-authoring-skills
-description: Use when creating or changing a skill: edit the source repo by PR, then install and refresh the local copy.
+description: Use when creating or changing a skill. Edit the source repo by PR, then install and refresh the local copy.
 ---
 
 # Authoring skills

@@ -22,6 +22,15 @@ for script in skills/*/scripts/*; do
   [ -x "$script" ] || fail "$script is not executable"
 done
 
+# An unquoted ": " in a frontmatter description is invalid YAML and makes `npx skills add` skip the skill.
+for skill in skills/*/SKILL.md; do
+  desc="$(sed -n 's/^description:[[:space:]]*//p' "$skill" | head -n1)"
+  case "$desc" in
+    \"* | \'*) ;;
+    *": "*) fail "$skill: description has an unquoted ': ' (invalid YAML); reword it or quote the value" ;;
+  esac
+done
+
 # The HITL status is the only stop marker; the label HITL must not come back, and a high-risk change gets high-risk.
 grep -q 'add high-risk' skills/gusdecool-board-worker/SKILL.md \
   || fail "gusdecool-board-worker SKILL.md does not add the high-risk label"
