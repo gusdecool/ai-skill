@@ -1266,6 +1266,16 @@ OUT="$(bash "$RUNSTATS" /wt/none 2>/dev/null)"; CODE=$?
 assert_eq "stats with no logs exits 0 with zeros" "0 0" "$CODE $(jq -r '.tokens' <<<"$OUT")"
 bash "$RUNSTATS" /wt/bm-1 --since yesterday >/dev/null 2>&1
 assert_eq "stats rejects a bad --since" "2" "$?"
+OUT="$(bash "$RUNSTATS" /wt/bm-2)"
+assert_eq "stats labels each model as provider:model" "claude:haiku-5.5 claude:sonnet-5.5" \
+  "$(jq -r '[.models[] | select(.label != "claude:claude-brand-new-1") | .label] | sort | join(" ")' <<<"$OUT")"
+assert_eq "stats counts the subagent logs" "1665" "$(jq -r '.tokens' <<<"$OUT")"
+assert_eq "stats labels an unpriced model provider:<raw id>" "claude:claude-brand-new-1" \
+  "$(jq -r '.models[] | select(.model == "claude-brand-new-1") | .label' <<<"$OUT")"
+assert_eq "stats reports when the run started" "2026-11-10T06:00:00.000Z" "$(jq -r '.startedAt' <<<"$OUT")"
+OUT="$(bash "$RUNSTATS" /wt/bm-2 --provider opencode)"
+assert_eq "stats --provider is the fallback label prefix" "opencode:claude-brand-new-1" \
+  "$(jq -r '.models[] | select(.model == "claude-brand-new-1") | .label' <<<"$OUT")"
 
 FIELDS='[{"id":"customfield_1","name":"Agent minutes","custom":true},
   {"id":"customfield_2","name":"Agent tokens","custom":true},
@@ -1273,30 +1283,88 @@ FIELDS='[{"id":"customfield_1","name":"Agent minutes","custom":true},
 FIELDS="$(jq -c . <<<"$FIELDS")"
 RUN='{"minutes":10,"tokens":100,"costUsd":1.5,"markdown":"Agent run table"}'
 reset_curl "200|$FIELDS" '200|{"fields":{"customfield_1":5}}' '200|{"fields":{"customfield_2":null}}' \
-  '200|{"fields":{}}' '204|' '201|{}'
+  '200|{"fields":{}}' '204|' '404|{}' '204|' '201|{}'
 printf '%s' "$RUN" | bash "$TICKET" stats BM-1; CODE=$?
 assert_eq "ticket stats succeeds" "0" "$CODE"
 assert_eq "ticket stats adds to the existing field values" \
   '{"fields":{"customfield_1":15,"customfield_2":100,"customfield_3":1.5}}' \
-  "$(grep '^PUT ' "$STUB_DIR/curl-calls" | sed 's/^PUT [^ ]* //')"
+  "$(grep '^PUT .*issue/BM-1 ' "$STUB_DIR/curl-calls" | sed 's/^PUT [^ ]* //')"
 assert_eq "ticket stats posts the markdown comment" "1" "$(grep -c 'comment .*Agent run table' "$STUB_DIR/curl-calls")"
-reset_curl '200|[]' '201|{}'
+reset_curl '200|[]' '404|{}' '204|' '201|{}'
 OUT="$(printf '%s' "$RUN" | bash "$TICKET" stats BM-1 2>&1)"; CODE=$?
 assert_eq "ticket stats with no fields still comments and warns" "0 1 0" \
-  "$CODE $(grep -c 'board-setup --stats-fields' <<<"$OUT") $(grep -c '^PUT ' "$STUB_DIR/curl-calls")"
+  "$CODE $(grep -c 'board-setup --stats-fields' <<<"$OUT") $(grep -c '^PUT .*issue/BM-1 ' "$STUB_DIR/curl-calls")"
 reset_curl '200|[]'
 printf 'nope' | bash "$TICKET" stats BM-1 >/dev/null 2>&1
 assert_eq "ticket stats rejects input that is not run stats" "2" "$?"
+
+# Agent models field, the agent.runs property, --model and runs.
+FIELDS4="$(jq -c '. + [{"id":"customfield_4","name":"Agent models","custom":true}]' <<<"$FIELDS")"
+RUN2='{"startedAt":"2026-11-10T06:00:00.000Z","provider":"claude","minutes":10,"tokens":100,"costUsd":1.5,
+  "markdown":"Agent run table","models":[
+  {"model":"claude-sonnet-5-5","label":"claude:sonnet-5.5","input":60,"output":30,"cacheRead":10,"cacheWrite":0,
+   "costUsd":1.2,"priced":true},
+  {"model":"<synthetic>","label":"claude:-synthetic-","input":0,"output":0,"cacheRead":0,"cacheWrite":0,
+   "costUsd":0,"priced":false}]}'
+reset_curl "200|$FIELDS4" '200|{"fields":{"customfield_1":5}}' '200|{"fields":{}}' '200|{"fields":{}}' '204|' \
+  '200|{"fields":{"customfield_4":["claude:haiku-5.5","claude:sonnet-5.5"]}}' '204|' \
+  '200|{"key":"agent.runs","value":[{"old":1}]}' '204|' '201|{}'
+printf '%s' "$RUN2" | bash "$TICKET" stats BM-1 >/dev/null 2>&1; CODE=$?
+assert_eq "ticket stats succeeds with the models field" "0" "$CODE"
+assert_eq "ticket stats merges model labels without duplicates" \
+  '{"fields":{"customfield_4":["claude:haiku-5.5","claude:sonnet-5.5"]}}' \
+  "$(grep '^PUT .*issue/BM-1 ' "$STUB_DIR/curl-calls" | tail -n 1 | sed 's/^PUT [^ ]* //')"
+PROP="$(grep '^PUT .*properties/agent.runs' "$STUB_DIR/curl-calls" | sed 's/^PUT [^ ]* //')"
+assert_eq "ticket stats keeps old runs and appends the new one" "2 claude:sonnet-5.5 1.5" \
+  "$(jq -r '"\(length) \(.[-1].models[0].label) \(.[-1].costUsd)"' <<<"$PROP")"
+assert_eq "ticket stats drops zero-usage models from the run" "1" "$(jq -r '.[-1].models | length' <<<"$PROP")"
+assert_eq "ticket stats stores the run start" "2026-11-10T06:00:00.000Z" "$(jq -r '.[-1].startedAt' <<<"$PROP")"
+
+BIG="$(jq -nc '[range(0; 40) | {n: ., pad: ("x" * 1000)}]')"
+reset_curl "200|$FIELDS" '200|{"fields":{}}' '200|{"fields":{}}' '200|{"fields":{}}' '204|' \
+  "200|{\"key\":\"agent.runs\",\"value\":$BIG}" '204|' '201|{}'
+printf '%s' "$RUN" | bash "$TICKET" stats BM-1 >/dev/null 2>&1
+PROP="$(grep '^PUT .*properties/agent.runs' "$STUB_DIR/curl-calls" | sed 's/^PUT [^ ]* //')"
+assert_eq "ticket stats trims old runs under 30 KB and marks it" "true 1" \
+  "$(jq -r '"\(.[0].truncated) \(if (tojson | length) <= 30000 then 1 else 0 end)"' <<<"$PROP")"
+
+reset_curl "200|$FIELDS" '200|{"fields":{}}' '200|{"fields":{}}' '200|{"fields":{}}' '204|' '500|{}' '201|{}'
+OUT="$(printf '%s' "$RUN" | bash "$TICKET" stats BM-1 2>&1)"; CODE=$?
+assert_eq "an unreadable agent.runs never fails stats and is not overwritten" "0 0 1" \
+  "$CODE $(grep -c '^PUT .*properties/agent.runs' "$STUB_DIR/curl-calls") $(grep -c 'comment' "$STUB_DIR/curl-calls")"
+
+reset_curl "200|$FIELDS4" '200|{"fields":{"customfield_4":null}}' '204|' '404|{}' '204|'
+OUT="$(bash "$TICKET" stats BM-1 --model opencode:deepseek-v4.1-flash --model codex:sol </dev/null 2>&1)"; CODE=$?
+assert_eq "stats --model succeeds without stdin" "0" "$CODE"
+assert_eq "stats --model adds the labels" '{"fields":{"customfield_4":["codex:sol","opencode:deepseek-v4.1-flash"]}}' \
+  "$(grep '^PUT .*issue/BM-1 ' "$STUB_DIR/curl-calls" | sed 's/^PUT [^ ]* //')"
+PROP="$(grep '^PUT .*properties/agent.runs' "$STUB_DIR/curl-calls" | sed 's/^PUT [^ ]* //')"
+assert_eq "stats --model writes a run with unknown numbers" "1 null null opencode:deepseek-v4.1-flash" \
+  "$(jq -r '"\(length) \(.[0].minutes) \(.[0].costUsd) \(.[0].models[0].label)"' <<<"$PROP")"
+assert_eq "stats --model posts no comment and no total" "0" "$(grep -c 'comment\|customfield_1' "$STUB_DIR/curl-calls")"
+bash "$TICKET" stats BM-1 --model "bad model" </dev/null >/dev/null 2>&1
+assert_eq "stats rejects a --model that is not provider:model" "2" "$?"
+
+reset_curl '404|{}'
+assert_eq "runs prints [] when the ticket has none" "[]" "$(bash "$TICKET" runs BM-1)"
+reset_curl '200|{"key":"agent.runs","value":[{"provider":"claude"}]}'
+assert_eq "runs prints the stored runs" '[{"provider":"claude"}]' "$(bash "$TICKET" runs BM-1)"
+reset_curl '500|{}'
+bash "$TICKET" runs BM-1 >/dev/null 2>&1
+assert_eq "runs fails on a Jira error" "2" "$?"
 
 SETUP_FIELDS='[{"id":"customfield_9","name":"Auto merge","custom":true},
   {"id":"customfield_2","name":"Agent tokens","custom":true},
   {"id":"customfield_3","name":"Agent cost USD","custom":true}]'
 reset_curl "200|$(jq -c . <<<"$SETUP_FIELDS")" '200|{"values":[{"id":10068}]}' \
-  '201|{"id":"customfield_11"}' '200|[{"id":7}]' '200|{}' '200|[{"id":7}]' '200|{}' '200|[{"id":7}]' '200|{}'
+  '201|{"id":"customfield_11"}' '200|[{"id":7}]' '200|{}' '200|[{"id":7}]' '200|{}' '200|[{"id":7}]' '200|{}' \
+  '201|{"id":"customfield_12"}' '200|[{"id":7}]' '200|{}'
 OUT="$(bash "$SETUP" --stats-fields 2>&1)"; CODE=$?
-assert_eq "setup --stats-fields creates the missing field and adds all three to the screen" "0 1 3" \
-  "$CODE $(grep -c 'created field Agent minutes' <<<"$OUT") \
+assert_eq "setup --stats-fields creates the missing fields and adds all four to the screen" "0 1 1 4" \
+  "$CODE $(grep -c 'created field Agent minutes' <<<"$OUT") $(grep -c 'created field Agent models' <<<"$OUT") \
 $(grep -c 'POST .*screens/10068/tabs/7/fields' "$STUB_DIR/curl-calls")"
+assert_eq "setup creates Agent models as a searchable Labels field" "1" \
+  "$(grep -c 'POST .*/rest/api/2/field {.*Agent models.*customfieldtypes:labels.*labelsearcher' "$STUB_DIR/curl-calls")"
 
 # The plan gate uses an isolated working directory and fake Jira comments.
 PLAN_GATE="$REPO/skills/gusdecool-board-worker/scripts/board-plan-check"

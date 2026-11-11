@@ -74,6 +74,9 @@ Never use this skill in a session whose prompt starts with `BOARD-WORKER`: a wor
    Before moving any existing ticket to Todo, read it with `board-ticket-cli view <key>`. If `autoMerge` is not `true`,
    ask the step 6 question first, default no, and on yes run `board-ticket-cli automerge <key>`. Why: an unticked box
    is a silent no, and the user should decide it once, not discover an unmerged PR later.
+   When the user asks you to implement the ticket in this session, follow `gusdecool-board-worker` for the steps and
+   merge it as its "Merge permission" says: with the box ticked, run `board-merge-gate` after green CI and merge when
+   it passes. Why: leaving the PR open after a ticked box ignores the user's decision.
 9. **Report** the ticket URL, the status, the Auto merge value, the blockers linked and any warning from step 5.
    When the new ticket is moved to Todo while a blocker is still in Backlog, say that the dispatcher will move it
    to HITL until the blocker is queued.

@@ -3,9 +3,11 @@
 # Usage: board-run-stats <worktree-path> [--since <ISO time>] [--provider <name>]
 # Reads the session logs Claude Code keeps for that worktree (${BOARD_CLAUDE_PROJECTS:-~/.claude/projects}/<slug>/
 # *.jsonl), counts each assistant message once, and prices the tokens with model-prices.tsv in the skill folder.
-# Prints one JSON object: {provider, minutes, tokens, costUsd, models: [{model, input, output, cacheRead,
-# cacheWrite, costUsd, priced}], unpriced: [model], markdown}. Exits 0, also with zeros when there are no logs
-# (a stats failure must never block a ticket); exits 2 on bad arguments.
+# Also reads the subagent logs (<session>/subagents/*.jsonl), so models used by Claude's own subagents are counted.
+# Prints one JSON object: {provider, startedAt, minutes, tokens, costUsd, models: [{model, label, input, output,
+# cacheRead, cacheWrite, costUsd, priced}], unpriced: [model], markdown}. label is provider:model (from the label
+# column of model-prices.tsv, else provider:<raw id>), safe for a Jira label.
+# Exits 0, also with zeros when there are no logs (a stats failure must never block a ticket); exits 2 on bad arguments.
 # Why logs and not Orca: Orca does not report tokens, but every Claude Code session writes per-message usage.
 set -euo pipefail
 
@@ -33,16 +35,16 @@ slug="$(printf '%s' "${worktree%/}" | sed -E 's/[^A-Za-z0-9]/-/g')"
 dir="${BOARD_CLAUDE_PROJECTS:-$HOME/.claude/projects}/$slug"
 
 shopt -s nullglob
-files=("$dir"/*.jsonl)
+files=("$dir"/*.jsonl "$dir"/*/subagents/*.jsonl)
 if [ "${#files[@]}" -eq 0 ]; then
   echo "board-run-stats: no session logs in $dir" >&2
   files=()
 fi
 
 # Price table as JSON: {model: {in, out, cr, cw}}.
-price_json="$(grep -v '^#' "$prices" | jq -Rn '[inputs | split("\t") | select(length == 5)
+price_json="$(grep -v '^#' "$prices" | jq -Rn '[inputs | split("\t") | select(length >= 5)
   | {key: .[0], value: {in: (.[1] | tonumber), out: (.[2] | tonumber), cr: (.[3] | tonumber),
-                        cw: (.[4] | tonumber)}}] | from_entries')"
+                        cw: (.[4] | tonumber), label: (.[5] // "")}}] | from_entries')"
 
 # One record per assistant message (the last copy wins, streaming repeats a message), then totals per model.
 records="[]"
@@ -59,6 +61,8 @@ jq -n --argjson r "$records" --argjson p "$price_json" --arg provider "$provider
   | ($r | group_by(.model) | map(
       . as $g | $g[0].model as $m | ($p[$m]) as $pr
       | {model: $m,
+         label: (if ($pr != null and $pr.label != "") then $pr.label
+                 else ($provider + ":" + $m) | gsub("[^A-Za-z0-9._:-]"; "-") end),
          input: (map(.u.input_tokens // 0) | add), output: (map(.u.output_tokens // 0) | add),
          cacheRead: (map(.u.cache_read_input_tokens // 0) | add),
          cacheWrite: (map(.u.cache_creation_input_tokens // 0) | add)}
@@ -66,7 +70,7 @@ jq -n --argjson r "$records" --argjson p "$price_json" --arg provider "$provider
              costUsd: (if $pr == null then 0 else
                ((.input * $pr.in + .output * $pr.out + .cacheRead * $pr.cr + .cacheWrite * $pr.cw) / 1000000)
                end)})) as $models
-  | {provider: $provider,
+  | {provider: $provider, startedAt: ($ts[0] // null),
      minutes: (if ($ts | length) < 2 then 0
                else (((($ts[-1] | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)
                        - ($ts[0] | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) / 60) | round(1)) end),
@@ -79,7 +83,8 @@ jq -n --argjson r "$records" --argjson p "$price_json" --arg provider "$provider
       + "| Wall time | " + (.minutes | tostring) + " min |\n"
       + "| Tokens | " + (.tokens | tostring) + " |\n"
       + "| Estimated cost | $" + (.costUsd | tostring) + " |\n"
-      + "| Models | " + (if (.models | length) == 0 then "none" else (.models | map(.model) | join(", ")) end) + " |\n\n"
+      + "| Models | "
+      + (if (.models | length) == 0 then "none" else (.models | map(.label) | join(", ")) end) + " |\n\n"
       + "Cost is an estimate: tokens times list price"
       + (if (.unpriced | length) > 0 then "; no price for " + (.unpriced | join(", ")) + " (counted as 0)" else "" end)
       + ".")}'

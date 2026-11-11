@@ -3,28 +3,33 @@
 # Usage: board-setup [--allowed <owner1,owner2>]
 # Writes ${BOARD_WORKER_CONFIG:-$HOME/.config/board-worker/config} (BOARD_ALLOWED_OWNERS only). Exits 0 when written
 # and Jira answers, 2 on bad input, a missing or invalid Jira config, or a Jira error (the config stays written).
-# board-setup --stats-fields: creates the number fields "Agent minutes", "Agent tokens" and "Agent cost USD" when they
-# are missing and puts them on the same screens as "Auto merge" (needs a Jira admin token). Safe to run again.
+# board-setup --stats-fields: creates the number fields "Agent minutes", "Agent tokens" and "Agent cost USD" and the
+# multi-value, JQL-searchable field "Agent models" (Labels type, values like claude:sonnet-5.5) when they are missing
+# and puts them on the same screens as "Auto merge" (needs a Jira admin token). Safe to run again.
 # Without a terminal and without the flag it fails instead of waiting for an answer. It never writes or prints the
 # Jira token; that file (${BOARD_JIRA_CONFIG:-$HOME/.config/board-worker/jira}) is created by the user.
 set -euo pipefail
 
-# Creates the three stats fields that do not exist yet and adds them to the screens that hold "Auto merge", so the
+# Creates the four stats fields that do not exist yet and adds them to the screens that hold "Auto merge", so the
 # worker can set them. Prints one line per field. Exits 2 on a Jira error.
 stats_fields() {
   source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
   jira_load_config || exit 2
-  local fields name id model screens screen tab
+  local fields name id model screens screen tab kind type searcher
   fields="$(jira_api GET /rest/api/2/field)" || exit 2
   model="$(jq -r '[.[] | select(.name == "Auto merge" and .custom == true) | .id] | .[0] // empty' <<<"$fields")"
   [ -n "$model" ] || die "the 'Auto merge' field is missing; it is the model for the screens"
   screens="$(jira_api GET "/rest/api/2/field/$model/screens")" || exit 2
-  for name in "Agent minutes" "Agent tokens" "Agent cost USD"; do
+  for name in "Agent minutes" "Agent tokens" "Agent cost USD" "Agent models"; do
+    # The three totals are number fields; "Agent models" is a Labels field so JQL can match one value.
+    kind="float" searcher="exactnumber"
+    if [ "$name" = "Agent models" ]; then kind="labels" searcher="labelsearcher"; fi
+    type="com.atlassian.jira.plugin.system.customfieldtypes:$kind"
+    searcher="com.atlassian.jira.plugin.system.customfieldtypes:$searcher"
     id="$(jq -r --arg n "$name" '[.[] | select(.name == $n and .custom == true) | .id] | .[0] // empty' <<<"$fields")"
     if [ -z "$id" ]; then
-      id="$(jira_api POST /rest/api/2/field "$(jq -n --arg n "$name" \
-        '{name: $n, description: "Set by the board worker", type: "com.atlassian.jira.plugin.system.customfieldtypes:float",
-          searcherKey: "com.atlassian.jira.plugin.system.customfieldtypes:exactnumber"}')" | jq -er '.id')" || exit 2
+      id="$(jira_api POST /rest/api/2/field "$(jq -n --arg n "$name" --arg t "$type" --arg s "$searcher" \
+        '{name: $n, description: "Set by the board worker", type: $t, searcherKey: $s}')" | jq -er '.id')" || exit 2
       echo "board-setup: created field $name ($id)"
     else
       echo "board-setup: field $name exists ($id)"

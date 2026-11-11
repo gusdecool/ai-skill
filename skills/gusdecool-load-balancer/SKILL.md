@@ -93,6 +93,10 @@ If no worker provider is eligible, the tasks wait for the earliest `resetsAt`: s
 
 - Give the worker the plan file written or approved in this session (steps are `- [ ]` boxes) so the next provider can continue from the first
   unticked box. Tell it to tick boxes in the same commit as the work.
+- When the task is a board ticket (key like BM-123), record each worker on another provider once it settles:
+  `board-ticket-cli stats <key> --model <provider:model>`, with the provider and model you launched, for example
+  `codex:sol` or `opencode:deepseek-v4.1-flash`. Why: the logs of those providers are not read, so this is the only
+  way "Agent models" and `agent.runs` show which models did the work. Skip it for a task that is not a ticket.
 - Always pass the model explicitly from the `AGENTS.md` tier table. Omitting it makes the worker inherit the user's
   default model. Keep reasoning effort at medium unless `AGENTS.md` says otherwise.
 - Pass the launch id from the "Launch IDs" table in `models.md`, never the display name. Why: in BM-56 a worker was
