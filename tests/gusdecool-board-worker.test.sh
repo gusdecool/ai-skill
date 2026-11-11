@@ -221,6 +221,12 @@ echo "Ready check"
 run_check $'## Goal\nShip the board worker.\n\n## Acceptance criteria\n- [ ] Works\n'
 assert_eq "ready body prints ready" '{"ready":true,"missing":[]}' "$(jq -c . <<<"$OUT")"
 assert_eq "ready body exits 0" "0" "$CODE"
+run_check $'h2. Goal\nShip it.\n\nh2. Acceptance criteria\n* Works\n\nh2. Human setup\n* Create the Meta app\n'\
+$'\nh2. Open questions\nNone.\n'
+assert_eq "a Human setup section keeps a ticket ready" '{"ready":true,"missing":[]}' "$(jq -c . <<<"$OUT")"
+run_check $'h2. Human setup\n* Set SSM /x/token\n'
+assert_eq "Human setup does not replace Goal and Acceptance criteria" \
+  '{"ready":false,"missing":["Goal","Acceptance criteria"]}' "$(jq -c . <<<"$OUT")"
 
 run_check $'## Expected behavior\nIt works.\n'
 assert_eq "missing Goal prints missing Goal" '["Goal"]' "$(jq -c .missing <<<"$OUT")"

@@ -1,6 +1,6 @@
 ---
 name: gusdecool-board-worker
-description: Use only when a prompt starts with the marker BOARD-WORKER and names a Jira ticket on the user's board (key like BM-123). Implements the ticket end to end (branch, tests, PR, CI, merge, UAT deploy watch) and moves it to QA, or stops with the HITL label and a comment. Works in any agent.
+description: Use only when a prompt starts with the marker BOARD-WORKER and names a Jira ticket on the user's board (key like BM-123). Implements the ticket end to end (branch, tests, PR, CI, merge, UAT deploy watch) and moves it to QA (HITL when the ticket has a Human setup section), or stops with the HITL label and a comment. Works in any agent.
 ---
 
 # Board worker
@@ -68,7 +68,7 @@ Done status, secrets or any other repo. Never move a ticket to Done: only the hu
 - `~/.agents/skills/gusdecool-board-worker/scripts/board-set-status <ticket-key> <status>`: moves the ticket. Status is one of
   Backlog, HITL, Todo, In progress, QA, Done.
 - `~/.agents/skills/gusdecool-board-worker/scripts/board-ticket-cli`: the only Jira tool you have. `view <key>` (JSON with
-  summary, status, labels, description, url), `status <key>`, `comment <key> <text>`,
+  summary, status, labels, description, humanSetup, url), `status <key>`, `comment <key> <text>`,
   `label <key> add|remove <LABEL>`. Use only these four subcommands.
 
 - `~/.agents/skills/gusdecool-board-worker/scripts/board-run-stats <worktree-path> --since <ISO start time>`: prints the run's
@@ -188,14 +188,21 @@ stop (see "Stopping").
    - `UAT: none`: skip the watch. The final comment says "no UAT".
    - `UAT: unknown` or no section: skip the watch. The final comment says the repo has no known UAT, so QA does not
      mean "already on UAT".
-9. **Finish.** Post the run stats first (see "Run stats" below), then move the ticket:
-   `board-set-status <ticket-key> QA`. Post a ticket comment with the PR link, the UAT
-   result, and anything you could not verify. For a high-risk change the `high-risk` label stays and the ticket still
-   goes to QA.
+9. **Finish.** Post the run stats first (see "Run stats" below), then pick the status:
+   - Human setup: the ticket has an `h2. Human setup` section (`board-ticket-cli view` shows `humanSetup: true`), or
+     the PR adds a "manual setup" section to a doc. Do steps 1 to 8 as usual (PR, CI, merge, UAT watch; the merge gate
+     is unchanged, so the `Auto merge` box is still needed to merge). Then post one comment that is a checklist of the
+     manual steps (`- [ ]` lines, each naming where it is done, merging the ticket's section with the doc's), plus the
+     PR link and UAT result, and run `board-set-status <ticket-key> HITL`, not QA. Never tick the checklist yourself.
+     Why: BM-56 (Facebook Pages) merged and deployed but could not work until the owner set up the Meta app, so QA
+     ("ready to check") was wrong; HITL already means the agent is done and waits for the user.
+   - No such section: `board-set-status <ticket-key> QA`. Post a ticket comment with the PR link, the UAT
+     result, and anything you could not verify. For a high-risk change the `high-risk` label stays and the ticket
+     still goes to QA.
 
 ## Run stats
 
-On every way out (QA or Stopping), once, just before the status move: run
+On every way out (QA, HITL or Stopping), once, just before the status move: run
 `board-run-stats "$(git rev-parse --show-toplevel)" --since <the ISO time of the "started" comment> |
 board-ticket-cli stats <key>`. If it prints an error, ignore it and carry on; never retry it more than once and never
 let it delay the status move. The numbers cover this session's logs only: Claude subagents are counted, workers on

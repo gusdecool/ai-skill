@@ -2,7 +2,8 @@
 # Jira ticket CLI for the board skills; workers on any provider use it as their only Jira tool.
 # Usage:
 #   board-ticket-cli view <key>
-#       one JSON object: key, summary, status, priority, component, components, labels, description, autoMerge, url
+#       one JSON object: key, summary, status, priority, component, components, labels, description, autoMerge,
+#       humanSetup (true when the description has a "Human setup" heading), url
 #   board-ticket-cli status <key>                      the status name only
 #   board-ticket-cli comment <key> <text...>           add a comment (the remaining arguments joined by a space)
 #   board-ticket-cli label <key> add|remove <LABEL>    LABEL matches ^[A-Za-z0-9_-]{1,40}$
@@ -84,6 +85,9 @@ cmd_view() {
        component: (($x.components // [])[0].name // ""),
        components: [($x.components // [])[].name], labels: ($x.labels // []),
        description: ($x.description // ""),
+       humanSetup: (($x.description // "")
+                    | test("(^|\n)((#{1,6}|h[1-6]\\.)[ \t]+human setup[ \t]*:?"
+                           + "|\\*\\*human setup:?\\*\\*:?)[ \t]*(\r?\n|$)"; "i")),
        autoMerge: (if $f == "" then null
                    else ($x[$f]) as $v
                         | (if ($v | type) == "array" then any($v[]; type == "object" and .value == "Yes")
