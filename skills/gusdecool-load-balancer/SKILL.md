@@ -95,6 +95,11 @@ If no worker provider is eligible, the tasks wait for the earliest `resetsAt`: s
   unticked box. Tell it to tick boxes in the same commit as the work.
 - Always pass the model explicitly from the `AGENTS.md` tier table. Omitting it makes the worker inherit the user's
   default model. Keep reasoning effort at medium unless `AGENTS.md` says otherwise.
+- Pass the launch id from the "Launch IDs" table in `models.md`, never the display name. Why: in BM-56 a worker was
+  started with `--model Sol`, Codex refused it, and the dispatch was wrongly moved to another provider.
+- A worker that errors in its first seconds with a "model not supported" or "unknown model" message is a launch error,
+  not a provider limit. Fix the id from `models.md` (or the CLI's model list) and restart on the same provider; do not
+  switch providers. Why: in BM-56 switching hid a typo and moved the work to a provider the balancer did not pick.
 - Workers share the session's worktree and get disjoint files.
 - Never use a High or Ultra model, or one missing from the table, unless the user said so. If a model is
   unavailable, stop and tell the user instead of substituting a more expensive one.
@@ -169,9 +174,9 @@ first.
 - **Launch:** `orca agent launch --agent <claude|codex|opencode> --worktree <selector> --prompt <text>`. Gemini runs
   through the Antigravity CLI (`agy`). For orchestrated workers use `orca orchestration worker-start` with `--model` set
   explicitly and `--worktree current`.
-- **Codex model slugs:** `--model` takes the slugs in `~/.codex/models_cache.json`, not display names. Before
-  dispatching, take the visible (`visibility: list`) slug for the tier's model family (Sol, Luna) with the highest
-  version. If it is newer than what `AGENTS.md` names, use the newer one.
+- **Codex model slugs:** `--model` takes the slugs in `~/.codex/models_cache.json`, not display names; `models.md`
+  lists them under "Launch IDs". If the table is stale, take the visible (`visibility: list`) slug for the tier's
+  model family with the highest version, and update the table by pull request.
 - **OpenCode Go models:** `--agent opencode --model opencode-go/<model>` (DeepSeek V4.1 Flash and V4 Pro; take the
   slugs from the API model IDs in `models.md`). The account must have its region set to Global in the OpenCode
   console, or DeepSeek calls fail with "This Go model is hosted outside Europe and the United States". That setting

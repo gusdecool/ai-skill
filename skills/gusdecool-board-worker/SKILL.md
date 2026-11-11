@@ -134,7 +134,9 @@ stop (see "Stopping").
    Run `board-plan-check <ticket-key>` before the first product-code edit; if it exits 1, stop (see Stopping).
    It also fails when the `Dispatch:` comment has no score table.
    Dispatch each task as a worker with
-   `orca orchestration worker-start --worktree current`, an explicit model and the plan file, then run `board-watch`
+   `orca orchestration worker-start --worktree current`, an explicit model (the launch id from `models.md`, never the
+   display name; a "model not supported" error in the first seconds is a launch error: fix the id and restart on the
+   same provider, see the `gusdecool-load-balancer` skill; why: BM-56) and the plan file, then run `board-watch`
    in the background for all running workers and wait for it. Use no tokens while it waits.
    - On `settled`: read the worker's output, check its work with the repo's gates, confirm the plan box is ticked,
      release the worker, then dispatch the next task.
