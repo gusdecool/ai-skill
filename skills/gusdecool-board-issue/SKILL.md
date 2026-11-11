@@ -19,8 +19,11 @@ Never use this skill in a session whose prompt starts with `BOARD-WORKER`: a wor
 2. **One question round.** Ask every remaining question at once, as choices: the options, your recommendation first,
    and each option's tradeoff in a line. No open questions with no options. The agent that works the ticket cannot ask
    the user, so anything left open becomes a guess. Also ask the priority (Highest, High, Medium, Low, Lowest;
-   default Medium), and which open tickets must be finished first (blockers). Offer the open tickets of the same
-   repo or epic as options, with "none" as the default. Why: the dispatcher builds blockers first and reminds the
+   default Medium), and "Does a human have to set anything up outside the repo (apps, env, SSM, scopes)?" (default no;
+   on yes, ask for each manual step and where it is done). Why: BM-56 (Facebook Pages) merged and deployed but could
+   not work until the owner created the Meta app, and only the author knows such steps up front. Also ask which open
+   tickets must be finished first (blockers). Offer the open tickets of the same repo or epic as options, with "none"
+   as the default. Why: the dispatcher builds blockers first and reminds the
    user about blockers that are not queued, but only for blockers recorded as Jira links.
 3. **Write the draft** to a temp file in Jira wiki markup, one ticket = one PR (split anything bigger), using this
    template:
@@ -39,6 +42,10 @@ Never use this skill in a session whose prompt starts with `BOARD-WORKER`: a wor
    h2. Decisions made
    The options chosen in the question round, with a short reason each.
 
+   h2. Human setup
+   Optional. Include it only when the question round found manual steps. One bullet per step, naming where it is
+   done (service, console, SSM path, env name). Example: * Create the Meta developer app; set SSM /app/meta/secret.
+
    h2. Non-goals
    What this ticket must not do.
 
@@ -49,6 +56,9 @@ Never use this skill in a session whose prompt starts with `BOARD-WORKER`: a wor
    None.
    ```
 
+   Leave the `h2. Human setup` section out when the answer was no. `board-check-ready` accepts the draft with or
+   without it and does not treat it as an open question. Why: a ticket with this section ends in HITL, not QA, so the
+   user is told to do the steps (BM-56 sat in QA, "ready to check", while it could not work).
 4. **Check the draft.** Run `~/.agents/skills/gusdecool-board-worker/scripts/board-check-ready --file <draft>` (wiki and
    Markdown headings both pass). It must print `"ready":true`; fix what it lists. Why: this is the exact check the
    dispatcher runs, so a draft that passes here is not bounced back to Backlog later.

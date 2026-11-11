@@ -54,7 +54,8 @@ reset_curl "200|$FIELDS" "200|$(jq -c . <<<"$ISSUE")"
 run view BM-5
 assert_eq "view exits 0" "0" "$CODE"
 EXPECT='{"key":"BM-5","summary":"Fix it","status":"In progress","priority":"High","component":"acme/app",'
-EXPECT+='"components":["acme/app"],"labels":["HITL","x"],"description":"h2. Goal\nX","autoMerge":true,'
+EXPECT+='"components":["acme/app"],"labels":["HITL","x"],"description":"h2. Goal\nX","humanSetup":false,'
+EXPECT+='"autoMerge":true,'
 EXPECT+='"url":"https://x.atlassian.net/browse/BM-5"}'
 assert_eq "view prints the ticket fields" "$EXPECT" "$OUT"
 reset_curl "200|$FIELDS" "200|$(jq -c '.fields.customfield_10036 = null | .fields.components = []' <<<"$ISSUE")"
@@ -68,6 +69,14 @@ reset_curl "200|$(jq -c '. + [{"id":"customfield_2","name":"Auto merge","custom"
   "200|$(jq -c . <<<"$ISSUE")"
 run view BM-5
 assert_eq "view with two Auto merge fields gives autoMerge null" "null" "$(jq -c .autoMerge <<<"$OUT")"
+for hs in $'h2. Human setup\n* Create the app' '## human setup' '**Human setup:**' $'h3. Human setup:\r\nx'; do
+  reset_curl "200|$FIELDS" "200|$(jq -c --arg d "h2. Goal"$'\n'"X"$'\n'"$hs" '.fields.description = $d' <<<"$ISSUE")"
+  run view BM-5
+  assert_eq "view sees the Human setup heading in: $hs" "true" "$(jq -c .humanSetup <<<"$OUT")"
+done
+reset_curl "200|$FIELDS" "200|$(jq -c '.fields.description = "h2. Goal\nNo human setup needed"' <<<"$ISSUE")"
+run view BM-5
+assert_eq "view ignores a Human setup phrase that is not a heading" "false" "$(jq -c .humanSetup <<<"$OUT")"
 reset_curl "200|$FIELDS" '404|{"errorMessages":["Issue does not exist"]}'
 run view BM-5
 assert_eq "view of a missing ticket exits 2" "2" "$CODE"
