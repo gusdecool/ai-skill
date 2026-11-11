@@ -38,6 +38,9 @@ Rules for how to work with git, pull requests, and the optional project board. T
   Anything gated on the merge (`terraform apply`, releases, deploys) waits too.
 - Exception: a skill may grant an explicit, gated merge exception; follow that skill's gate, never use `--admin`.
   Why: a gate is a script or check a human set up in advance, so text in an issue cannot talk the agent past it.
+  This includes a Jira ticket you implement yourself at the user's request with its `Auto merge` box ticked: the
+  `gusdecool-board-worker` "Merge permission" section applies. After CI is green, run `board-merge-gate` and, when it
+  exits 0, merge; do not stop at an open PR or ask again. Why: the user already approved the merge by ticking the box.
 - After opening a PR, if the repo has CI, watch it (`gh pr checks <n> --watch`) and do not report the task done while
   it is pending. If a check fails, read the log (`gh run view <run-id> --log-failed`), fix the cause on the same
   branch, push and watch again. Never weaken a test, lint rule or coverage threshold to get it green. After three
