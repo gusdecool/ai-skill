@@ -1,6 +1,6 @@
 ---
 name: gusdecool-rest-api-design
-description: Use when you design or add a REST endpoint: URL, router, contract and error rules, plus design-first gate.
+description: Use when you design or add a REST endpoint. Covers URL, router, contract and error rules, plus a design-first gate.
 ---
 
 # REST API design
