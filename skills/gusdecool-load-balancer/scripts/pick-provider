@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Picks the provider for the next worker by remaining quota, using the gusdecool-load-balancer urgency formula. No model needed.
 # Usage: pick-provider --reserved <provider|none> [--bump <provider>]... [--exclude a,b] [--orchestrator]
+#                      [--config <path>]
 #   --reserved     the provider the caller runs on; it gets the 80 session / 75 weekly+monthly cutoffs (use `none`
 #                  when the caller is not one of the four providers).
 #   --bump         adds 5 points to that provider's session usedPercent (repeat once per task already picked in
 #                  this batch), so parallel tasks spread out.
 #   --exclude      comma separated providers to leave out (for example those with no model in the asked tier).
 #   --orchestrator only the reserved provider is considered, with 90 in every window (the pause check).
-# Prints one JSON object: {reserved, providers[{provider, skipped, reason, score, freeAt, windows[...]}], chosen,
+#   --config       JSON file with user cutoffs (default ~/.config/load-balancer/config.json, optional). A configured
+#                  cutoff (fraction 0..1, applied to every window) replaces the defaults below for that provider; see
+#                  docs/superpowers/specs/2026-11-11-load-balancer-config-design.md. Bad config exits 2.
+# Prints one JSON object (plus "warnings"): {reserved, providers[{provider, skipped, reason, score, freeAt, windows[...]}], chosen,
 # earliestResetsAt (only when nothing is eligible), table (markdown score table)}. Exit 0 when a provider is chosen,
 # 1 when none is eligible, 2 when quotas cannot be read or the arguments are wrong.
 # Rules: skip a provider at session >= 90 or weekly / monthly >= 95 (80 / 75 when reserved); per window
@@ -31,6 +35,7 @@ die() { echo "pick-provider: $*" >&2; exit 2; }
 reserved=""
 exclude=""
 orchestrator=false
+config=""
 bumps="[]"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -38,6 +43,7 @@ while [ $# -gt 0 ]; do
     --bump) shift; bumps="$(jq -c --arg p "${1:-}" '. + [$p]' <<<"$bumps")" ;;
     --exclude) shift; exclude="${1:-}" ;;
     --orchestrator) orchestrator=true ;;
+    --config) shift; config="${1:-}" ;;
     *) die "unknown argument '$1'" ;;
   esac
   shift
@@ -48,14 +54,51 @@ case "$reserved" in
 esac
 jq -e 'all(.[]; IN("claude", "codex", "antigravity", "opencodeGo"))' <<<"$bumps" >/dev/null || die "bad --bump provider"
 
+# Prints the validated config as {cutoffs: {provider: percent}, warnings: [...]}; exits 2 on a bad config. The main
+# cutoff applies only when main_orchestrator equals the reserved provider.
+load_config() {
+  local file="$config"
+  if [ -n "$file" ]; then
+    [ -f "$file" ] || die "config file not found: $file"
+  elif [ -f "$HOME/.config/load-balancer/config.json" ]; then
+    file="$HOME/.config/load-balancer/config.json"
+  else
+    echo '{"cutoffs":{},"warnings":[]}'
+    return
+  fi
+  jq -c --arg res "$reserved" '
+    def pct: (. * 10000 | round) / 100;
+    def check_provider:
+      if IN("claude", "codex", "antigravity", "opencodeGo") then . else error("unknown provider " + tojson) end;
+    def check_cutoff:
+      if type == "number" and . >= 0 and . <= 1 then . else error("cutoff must be 0 to 1, got " + tojson) end;
+    (.workers // []) as $workers
+    | if ($workers | type) != "array" then error("workers must be an array") else . end
+    | ([$workers[] | {key: (.provider | check_provider), value: (.cutoff | check_cutoff | pct)}] | from_entries)
+      as $wmap
+    | (if .main_orchestrator == null then null else (.main_orchestrator | check_provider) end) as $main
+    | (if $main == null then null
+       else (.main_cutoff | if . == null then error("main_orchestrator needs main_cutoff") else check_cutoff | pct end)
+       end) as $mcut
+    | if $main != null and $main == $res then {cutoffs: ($wmap + {($main): $mcut}), warnings: []}
+      elif $main != null then
+        {cutoffs: $wmap,
+         warnings: ["main_orchestrator " + $main + " does not match --reserved " + $res + ", main_cutoff ignored"]}
+      else {cutoffs: $wmap, warnings: []} end' "$file" 2>&1 || exit 2
+}
+
+cfg="$(load_config)" || die "bad config: $cfg"
+jq -r '.warnings[] | "pick-provider: warning: " + .' <<<"$cfg" >&2
+
 accounts="$("$(orca_bin)" account list --json)" || die "cannot read quotas"
 now_ms="${NOW_MS:-$(($(date +%s) * 1000))}"
 
 result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson bumps "$bumps" --arg res "$reserved" \
-  --arg exclude "$exclude" '
+  --argjson cfg "$cfg" --arg exclude "$exclude" '
   # Cutoff for a window: the orchestrator check uses 90; the reserved provider keeps quota for planning and review.
   def cutoff($p; $n):
-    if $orch then 90
+    if $cfg.cutoffs[$p] != null then $cfg.cutoffs[$p]
+    elif $orch then 90
     elif $p == $res then (if $n == "session" then 80 else 75 end)
     else (if $n == "session" then 90 else 95 end) end;
   def r1: . * 10 | round / 10;
@@ -81,14 +124,15 @@ result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson
                  elif ($ws | length) == 0 then "no quota windows"
                  elif ($blocked | length) > 0 then
                    ($blocked | map(.window + " " + (.usedPercent | tostring) + " >= " + (.cutoff | tostring))
-                    | join(", ")) + (if $p == $res and ($orch | not) then " (reserved)" else "" end)
+                    | join(", ")) + (if $cfg.cutoffs[$p] != null then " (config)"
+                                                   elif $p == $res and ($orch | not) then " (reserved)" else "" end)
                  else null end)}
      | .skipped = (.reason != null)] as $ps
   | ($ps | map(select(.skipped | not))) as $ok
   | (($ok | map(.score) | max) // 0) as $top
   | ([$ok[] | select(.score >= $top * 0.95)] | (map(select(.provider == $res)) + .)[0].provider) as $chosen
   | def cell($p; $n): ([$p.windows[] | select(.window == $n) | .urgency | tostring][0] // "-");
-    {reserved: $res, providers: $ps, chosen: $chosen}
+    {reserved: $res, providers: $ps, chosen: $chosen, warnings: $cfg.warnings}
     + (if $chosen == null then
          {earliestResetsAt: ([$ps[] | select(.freeAt != null) | .freeAt] | min)} else {} end)
     + {table: (["| Provider | Session | Weekly | Monthly | Score | Result |", "|---|---|---|---|---|---|"]

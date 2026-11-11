@@ -39,6 +39,31 @@ Any tool must give you these, or it cannot be used:
 
 A provider whose status is not ok, or whose quota cannot be read, is unavailable.
 
+## User config (optional)
+
+The user can set their own cutoffs in `~/.config/load-balancer/config.json` (override the path with
+`pick-provider --config <path>`). The script reads it itself; you only pass `--config` if the user names a file.
+Why: the user decides how much of each quota to spend, for example keeping half for another tool.
+
+```json
+{
+  "main_orchestrator": "claude",
+  "main_cutoff": 0.5,
+  "main_cutoff_reason": "rest of quota for code review and general tasks",
+  "workers": [
+    { "provider": "opencodeGo", "cutoff": 0.5, "reason": "rest goes to the Hermes agent" }
+  ]
+}
+```
+
+- `cutoff` is a fraction from 0 to 1 of used quota; a provider is skipped when any window (session, weekly, monthly)
+  reaches it. `reason` fields are notes for humans and are ignored.
+- `main_cutoff` replaces the reserved cutoffs (80 / 75) and the 90 of the pause check, but only when
+  `main_orchestrator` equals your provider. On a mismatch the defaults apply and `warnings` says so; tell the user.
+- A worker in `workers` uses its `cutoff` instead of 90 / 95. A provider not listed uses the default strategy below.
+- Provider names are `claude`, `codex`, `antigravity`, `opencodeGo`. No file means defaults. A bad file or value makes
+  the script exit 2: stop and tell the user, do not guess. Why: a typo must not silently drop a cap.
+
 ## Choosing the provider for a task
 
 Pick per task, at dispatch time, at the tier the task needs (from `AGENTS.md`), with that provider's model.
@@ -62,9 +87,10 @@ then see that the formula ran. A dispatch with no table is treated as not balanc
 
 What the script does (the rules, kept here so you can read its output):
 
-1. **Cutoffs.** Skip a provider whose session `usedPercent` is 90 or more, or weekly or monthly is 95 or more. For
-   your own (reserved) provider use 80 for session and 75 for weekly and monthly instead, so you keep quota for
-   planning, review and questions. A provider whose status is not ok, or with no windows, is skipped.
+1. **Cutoffs.** Unless the user config sets one for the provider (see "User config"), skip a provider whose
+   session `usedPercent` is 90 or more, or weekly or monthly is 95 or more. For your own (reserved) provider use 80
+   for session and 75 for weekly and monthly instead, so you keep quota for planning, review and questions. A provider
+   whose status is not ok, or with no windows, is skipped.
 2. **Urgency.** For every window of each remaining provider:
    - `remaining = 100 - usedPercent`
    - `timeLeftFraction = (resetsAt - now) / (windowMinutes * 60000)`, never below 0.05
@@ -141,7 +167,7 @@ Only the orchestrator (the provider you run on) pauses the whole job. A worker's
 reason to stop: take the task over with the next eligible provider (see "Watching for stuck workers"). Never ask the
 user whether to wait; read the reset time from the tool and tell them when the work continues.
 
-1. **Trigger.** When the orchestrator's own provider reaches 90% in either window (session or weekly), start this
+1. **Trigger.** When the orchestrator's own provider reaches 90% in either window (session or weekly), or its `main_cutoff` from the user config, start this
    procedure. Do not start new tasks. Let each running worker finish its current step, accept its report, and record
    the state in the plan file (ticked boxes, WIP commits noted).
 2. **Read the reset time from the tool** (`resetsAt` of the window at or over 90%, the later one if both) and tell the
