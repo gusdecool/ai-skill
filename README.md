@@ -183,6 +183,11 @@ The agent creates the template if it is missing, clones it for your current git 
 You can also ask for the others in plain words: "list my MySQL branches", "drop the MySQL branch for
 feat/login" (it asks you to confirm before dropping).
 
+When the work ends (PR merged, task done or abandoned) the agent drops the branch databases it created in that task.
+Saying "use MySQL branch" counts as consent to that; otherwise it asks once, naming the databases. It never drops the
+template, the source or a database another branch uses. Test databases it needs are made with the script too, so the
+same cleanup covers them.
+
 **Or run the script yourself** (it lives in the skill's `scripts/` folder, run it from your repo):
 
 | Command | What it does |
