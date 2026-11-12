@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Maps Jira component names to Orca repos.
+#   ticket-repos <component>...
+# Prints a JSON array of {component, repoId, path}; repoId and path are null for a component with no single matching
+# repo. A component matches a repo displayName case-insensitively, or the name given by a line `component=repo` in
+# ~/.config/orchestrate-ticket/repos (env ORCHESTRATE_TICKET_REPOS replaces the path). Exit 0 when all matched,
+# 3 when any is unmatched or ambiguous, 2 on usage errors. Needs jq and the orca CLI (ORCA_BIN or `orca` on PATH).
+set -uo pipefail
+
+OVERRIDES="${ORCHESTRATE_TICKET_REPOS:-$HOME/.config/orchestrate-ticket/repos}"
+
+# Prints $1 in lower case (portable to bash 3.2 on macOS).
+lower() { printf %s "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# Prints the repo name an override line gives for a component, or the component itself when none does.
+override_for() {
+  local component="$1" line key val
+  if [ -f "$OVERRIDES" ]; then
+    while IFS= read -r line; do
+      case "$line" in '' | '#'*) continue ;; esac
+      key="${line%%=*}"
+      val="${line#*=}"
+      if [ "$(lower "$key")" = "$(lower "$component")" ]; then echo "$val"; return; fi
+    done <"$OVERRIDES"
+  fi
+  echo "$component"
+}
+
+# Prints the JSON object for one component against the repo list in $1; repoId and path are null unless exactly one
+# repo matches.
+resolve() {
+  local repos="$1" component="$2" name
+  name="$(override_for "$component")"
+  jq -c --arg c "$component" --arg n "$name" '
+    [.[] | select((.displayName | ascii_downcase) == ($n | ascii_downcase))] as $m
+    | if ($m | length) == 1
+      then {component: $c, repoId: $m[0].id, path: $m[0].path}
+      else {component: $c, repoId: null, path: null} end' <<<"$repos"
+}
+
+# Resolves every argument and prints the array; returns 3 when any component did not resolve.
+main() {
+  [ "$#" -ge 1 ] || { echo "usage: ticket-repos <component>..." >&2; return 2; }
+  local repos orca="${ORCA_BIN:-orca}" c out=""
+  repos="$("$orca" repo list --json | jq -c '.result.repos')" || { echo "cannot read orca repo list" >&2; return 2; }
+  for c in "$@"; do out+="$(resolve "$repos" "$c")"$'\n'; done
+  jq -s '.' <<<"$out"
+  jq -se 'all(.[]; .repoId != null)' <<<"$out" >/dev/null || return 3
+}
+
+main "$@"

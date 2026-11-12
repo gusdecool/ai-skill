@@ -4,3 +4,4 @@ set -uo pipefail
 
 echo "orca $*" >>"$STUB_DIR/calls.log"
 if [ "${1:-}" = "worktree" ] && [ "${2:-}" = "list" ]; then cat "$STUB_DIR/orca-worktrees"; fi
+if [ "${1:-}" = "repo" ] && [ "${2:-}" = "list" ]; then cat "$STUB_DIR/orca-repos"; fi
