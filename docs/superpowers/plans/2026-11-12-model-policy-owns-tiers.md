@@ -223,7 +223,7 @@ Verification blocked: board-worker tests fail two orchestrator assertions; see t
 - [x] **Step 1:** Run `shellcheck` on the new scripts and tests, every test file, and `pnpm test`.
   (`shellcheck` is not installed locally; CI runs it in Step 3.)
 - [x] **Step 2:** `grep -c '\- \[ \]'` on this plan; only Tasks 6 and 7 may have open boxes.
-- [ ] **Step 3:** Push and open the PR; watch CI until green. Do not merge.
+- [x] **Step 3:** Push and open the PR; watch CI until green. Do not merge.
 
 ### Task 7: `agent-standards` pull request (after the owner merges and installs Task 6)
 
