@@ -1,6 +1,6 @@
 ---
 name: gd-git-workflow
-description: Use when committing, branching, creating or removing a worktree, pushing, opening or merging a pull request, watching CI, or touching a GitHub issue or project board card. Covers task branches, commit message rules, never merging without the user's word in the conversation, and project-board steps driven by a local config file.
+description: Use when committing, branching, creating or removing a worktree, pushing, opening or merging a pull request, watching CI, or touching an issue, ticket, epic or project board card. Covers task branches, commit message rules, never merging without the user's word in the conversation, and project-board steps driven by a local config file.
 license: MIT
 metadata:
   author: gusdecool
@@ -60,11 +60,25 @@ Rules for how to work with git, pull requests, and the optional project board. T
   `gh pr merge --delete-branch`, which also tries to switch branches in the local checkout.
 - Link a PR to its issue with `Refs #N`, never `Closes` or `Fixes`, so a merge cannot close the issue.
 
+## Which tracker
+
+Decide where work is tracked before you create any issue, ticket, epic or card.
+
+- Run `gh api repos/<owner>/<repo> --jq .has_issues`. If it prints `false`, the repo has GitHub Issues turned off:
+  do not create a GitHub issue or card. Track the work in Jira instead.
+- Use Jira as well when the user says "Jira", "ticket" or "epic", or the repo's `AGENTS.md` says Jira. For a ticket a
+  worker will implement, follow `gd-board-issue`. For a reminder epic, create it in Jira too (the CLI only creates Task,
+  Story and Bug, so use `jira_api` from `board-lib.sh` with issue type Epic, and run it under `bash`).
+- When you cannot tell, ask once before creating anything. Why: a session created a GitHub issue and put it on the
+  project board in a repo that tracks work in Jira with GitHub Issues turned off, and the user had to say "no GitHub
+  issues, we're using Jira now". Nothing in the skill said how to choose.
+- Everything under "Project board" below applies only when the tracker is GitHub.
+
 ## Project board
 
-Board steps are optional. They are driven by a config file `~/.config/git-workflow/config` (plain `KEY=value`, like
-`~/.config/board-worker/config`). The values are owner-specific, so they live on the user's machine, never in this
-skill.
+Board steps are optional, and only for a repo that tracks work on GitHub. They are driven by a config file
+`~/.config/git-workflow/config` (plain `KEY=value`, like `~/.config/board-worker/config`).
+The values are owner-specific, so they live on the user's machine, never in this skill.
 
 | Key | Meaning | Example |
 |---|---|---|
