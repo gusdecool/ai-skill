@@ -62,4 +62,4 @@ assert_eq "override maps component to repo" "id-1" "$(jq -r '.[0].repoId' <<<"$O
 run
 assert_eq "no arguments exits 2" 2 "$CODE"
 
-[ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
+if [ "$FAILS" -eq 0 ]; then echo "all passed"; else echo "$FAILS failed"; exit 1; fi
