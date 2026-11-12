@@ -80,6 +80,7 @@ run --provider codex --tier Low
 assert_eq "Low uses the first model in a cell" '0 gpt-6-luna' "$CODE $(jq -r .launchId <<<"$OUT")"
 
 # A later model in the same cell remains usable when the first has no launch id.
+# shellcheck disable=SC2016 # the backticks are literal table text, not a command substitution
 sed 's/| Codex | Luna | `gpt-6-luna` |/| Codex | Luna | none |/' \
   "$FIXTURES/models.md" >"$FIXTURES/same-cell-fallback.md"
 TABLE="$FIXTURES/same-cell-fallback.md"
