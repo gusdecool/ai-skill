@@ -7,6 +7,7 @@ that read the shared skills folder.
 
 | Skill | Use case | Details |
 |---|---|---|
+| `gd-orchestrate-ticket` | Orchestrate a ticket across repos with Orca workers | [SKILL.md][gd-orchestrate-ticket] |
 | `gusdecool-authoring-skills` | Change a skill by PR in its repo, install | [SKILL.md][gusdecool-authoring-skills] |
 | `gusdecool-board-issue` | Write a board-ready issue (final spec, Auto merge) | [SKILL.md][gusdecool-board-issue] |
 | `gusdecool-board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][gusdecool-board-worker] |
@@ -22,6 +23,7 @@ that read the shared skills folder.
 Every agent calls a skill by its name, for example `gusdecool-mysql-branch`. Installed as a Claude Code plugin, the
 command is `/gusdecool:gusdecool-<name>`.
 
+[gd-orchestrate-ticket]: skills/gd-orchestrate-ticket/SKILL.md
 [gusdecool-authoring-skills]: skills/gusdecool-authoring-skills/SKILL.md
 [gusdecool-board-issue]: skills/gusdecool-board-issue/SKILL.md
 [gusdecool-board-worker]: skills/gusdecool-board-worker/SKILL.md

@@ -45,6 +45,11 @@ Rules for how to work with git, pull requests, and the optional project board. T
   it is pending. If a check fails, read the log (`gh run view <run-id> --log-failed`), fix the cause on the same
   branch, push and watch again. Never weaken a test, lint rule or coverage threshold to get it green. After three
   failed fix rounds, stop and tell the user what is failing and why.
+- After opening a PR, always check its merge state before you report back, even when the repo has no CI:
+  `gh pr view <n> --json mergeable,mergeStateStatus`. If it is `CONFLICTING` or `DIRTY`, fetch, merge the base branch
+  into the PR branch, resolve the conflicts keeping both sides' intent, push, and check again. Report only when the
+  state is `MERGEABLE` and `CLEAN` (or say why it is not). Merge the base in; do not rebase or force push a published
+  branch. Why: a PR reported as ready was in conflict because only CI was checked, and the user found it first.
 - After a PR is merged (by the user, or by the agent on explicit instruction), delete its head branch on GitHub unless
   it is the default branch: `git push origin --delete <branch>`, then check it is gone with
   `git ls-remote --heads origin <branch>`. In a worktree, delete only the remote branch; do not use
