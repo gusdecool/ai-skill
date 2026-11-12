@@ -49,7 +49,7 @@
 - Create: `skills/gd-orchestrate-ticket/SKILL.md`
 - Modify: `README.md` (skills table and link), `.github/workflows/ci.yml` (run the new test)
 
-- [ ] **Step 1: Write SKILL.md** from the spec steps, with the worker brief contract
-- [ ] **Step 2: Add the README row and link; add the CI test step**
-- [ ] **Step 3: Run** `shellcheck skills/*/scripts/* tests/*.sh`, `bash tests/check-structure.sh`, the new test
-- [ ] **Step 4: Commit, push, open the PR**
+- [x] **Step 1: Write SKILL.md** from the spec steps, with the worker brief contract
+- [x] **Step 2: Add the README row and link; add the CI test step**
+- [x] **Step 3: Run** `shellcheck skills/*/scripts/* tests/*.sh`, `bash tests/check-structure.sh`, the new test
+- [x] **Step 4: Commit, push, open the PR**
