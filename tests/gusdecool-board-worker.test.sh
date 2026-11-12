@@ -587,15 +587,50 @@ cat >"$STUB_DIR/orca" <<'STUB'
 cat "$ACCOUNTS_FIXTURE"
 STUB
 chmod +x "$STUB_DIR/orca"
-cat >"$STUB_DIR/codex-models.json" <<'JSON'
-{"models":[{"slug":"gpt-6-sol","visibility":"list"},{"slug":"gpt-6.1-sol","visibility":"list"},
- {"slug":"gpt-7-sol","visibility":"hide"},{"slug":"gpt-5.6-sol","visibility":"list"},
- {"slug":"gpt-6.1-terra","visibility":"list"}]}
-JSON
+cat >"$STUB_DIR/provider-models.md" <<'TABLE'
+# Fixture
+
+| Provider | Low | Mid | High | Ultra |
+|---|---|---|---|---|
+| Claude | Haiku 5.5 | Sonnet 5.5 | Opus 5.5 | Fable 5.2 |
+| Codex | Luna, Terra | Sol | none | Astra |
+| Gemini | 3.5 Flash-Lite, 3.6 Flash | 3.8 Flash | none | none |
+| DeepSeek | V4.1 Flash | V4 Pro | none | none |
+| Kimi | K2.6 | K2.7 Code | none | none |
+
+## Providers
+
+| Quota provider | Agent CLI | Table rows |
+|---|---|---|
+| claude | claude | Claude |
+| codex | codex | Codex |
+| antigravity | agy | Gemini |
+| opencodeGo | opencode | DeepSeek, Kimi |
+
+## Launch IDs
+
+| Provider | Model | Launch id |
+|---|---|---|
+| Claude | Haiku 5.5 | `claude-haiku-5-5` |
+| Claude | Sonnet 5.5 | `claude-sonnet-5-5` |
+| Claude | Opus 5.5 | `claude-opus-5-5` |
+| Claude | Fable 5.2 | `claude-fable-5-2` |
+| Codex | Luna | `gpt-6-luna` |
+| Codex | Terra | `gpt-6.1-terra` |
+| Codex | Sol | `gpt-6.1-sol` |
+| Codex | Astra | `gpt-6-astra` |
+| Gemini | 3.5 Flash-Lite | none |
+| Gemini | 3.6 Flash | none |
+| Gemini | 3.8 Flash | `gemini-3.8-flash-medium` |
+| DeepSeek | V4.1 Flash | `opencode-go/deepseek-v4.1-flash` |
+| DeepSeek | V4 Pro | `opencode-go/deepseek-v4-pro` |
+| Kimi | K2.6 | none |
+| Kimi | K2.7 Code | `opencode-go/kimi-k2.7-code` |
+TABLE
 
 # Runs pick-provider against a fixture at the fixed clock, storing stdout in OUT and the exit code in CODE.
 run_provider() {
-  ACCOUNTS_FIXTURE="$1" ORCA_BIN="$STUB_DIR/orca" CODEX_MODELS_CACHE="$STUB_DIR/codex-models.json" \
+  ACCOUNTS_FIXTURE="$1" ORCA_BIN="$STUB_DIR/orca" MODELS_FILE="${MODELS_FILE:-$STUB_DIR/provider-models.md}" \
     NOW_MS=1000000000000 bash "$PICKPROV" "${@:2}" 2>/dev/null
 }
 # Writes a modified copy of the accounts fixture, built from a jq filter, to $STUB_DIR/accounts.json.
@@ -616,7 +651,7 @@ assert_eq "claude gets its model" "claude-sonnet-5-5" "$(jq -r .model <<<"$OUT")
 tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 76 | .result.rateLimits.codex.status = "error"'
 OUT="$(run_provider "$STUB_DIR/accounts.json")"
 assert_eq "claude over its reserved weekly cutoff is skipped" "antigravity" "$(jq -r .provider <<<"$OUT")"
-assert_eq "antigravity gets its model" "gemini-3.8-flash" "$(jq -r .model <<<"$OUT")"
+assert_eq "antigravity gets its model" "gemini-3.8-flash-medium" "$(jq -r .model <<<"$OUT")"
 
 tweak_accounts '.result.rateLimits.claude.weekly.usedPercent = 10 | .result.rateLimits.codex.session.usedPercent = 90
   | .result.rateLimits.antigravity.weekly.usedPercent = 95'
@@ -680,20 +715,23 @@ OUT="$(run_provider "$STUB_DIR/accounts.json")"
 CODE=$?
 assert_eq "opencode go over its monthly cutoff is skipped" "1" "$CODE"
 
-cat >"$STUB_DIR/models.md" <<'MD'
-| Provider | Low | Mid | High | Ultra |
-|---|---|---|---|---|
-| Claude | Haiku 5.5 | Sonnet 5.5 | none | none |
-| Codex | Luna | Sol | none | none |
-| Gemini | 3.5 Flash-Lite | 3.8 Flash | none | none |
-MD
+sed 's/| Opus 5.5 | Fable 5.2 |/| none | none |/' "$STUB_DIR/provider-models.md" >"$STUB_DIR/models.md"
 OUT="$(MODELS_FILE="$STUB_DIR/models.md" run_provider "$FIX/accounts.json" --tier High)"
 CODE=$?
-assert_eq "a tier no provider has exits 1" "1" "$CODE"
+assert_eq "High with no model still needs approval" "2" "$CODE"
 ERR="$(MODELS_FILE="$STUB_DIR/models.md" ACCOUNTS_FIXTURE="$FIX/accounts.json" ORCA_BIN="$STUB_DIR/orca" \
-  CODEX_MODELS_CACHE="$STUB_DIR/codex-models.json" NOW_MS=1000000000000 bash "$PICKPROV" --tier High 2>&1 >/dev/null)"
-assert_eq "the refusal names provider and tier" "1" \
-  "$(grep -c 'codex has no High model' <<<"$ERR" | grep -q '^1$' && echo 1 || echo 0)"
+  NOW_MS=1000000000000 bash "$PICKPROV" --tier High 2>&1 >/dev/null)"
+assert_eq "the refusal names tier and required approval" "1" \
+  "$(grep -c "High needs the user's OK" <<<"$ERR" | grep -q '^1$' && echo 1 || echo 0)"
+awk -F '|' 'BEGIN { OFS = "|" }
+  /^\| Provider \| Low / { tiers = 1; print; next }
+  /^#/ { tiers = 0 }
+  tiers && $2 ~ /^ (Claude|Codex|Gemini|DeepSeek|Kimi) $/ { $3 = " none " }
+  { print }' "$STUB_DIR/provider-models.md" >"$STUB_DIR/no-low.md"
+OUT="$(MODELS_FILE="$STUB_DIR/no-low.md" run_provider "$FIX/accounts.json" --tier Low)"
+CODE=$?
+assert_eq "a tier no provider has exits 1" "1" "$CODE"
+assert_eq "no Low model reports the tier error" '{"error":"no provider has a Low model"}' "$(jq -c . <<<"$OUT")"
 OUT="$(MODELS_FILE="$STUB_DIR/models.md" run_provider "$FIX/accounts.json" --tier Mid)"
 CODE=$?
 assert_eq "tier Mid still works with the table" "codex Mid 0" "$(jq -r '.provider + " " + .tier' <<<"$OUT") $CODE"
@@ -708,9 +746,10 @@ assert_eq "a tier with no known model id exits 2" "2" "$CODE"
 # With ORCA_BIN unset and no orca on PATH (the Orca scheduler's case), pick-provider uses the fallback binary.
 NOORCA="$STUB_DIR/noorca-bin"
 mkdir -p "$NOORCA"
-for tool in bash jq date dirname cat; do ln -sf "$(command -v "$tool")" "$NOORCA/$tool"; done
+for tool in bash jq date dirname cat awk; do ln -sf "$(command -v "$tool")" "$NOORCA/$tool"; done
 OUT="$(env -u ORCA_BIN PATH="$NOORCA" ORCA_FALLBACK_BIN="$STUB_DIR/orca" ACCOUNTS_FIXTURE="$FIX/accounts.json" \
-  CODEX_MODELS_CACHE="$STUB_DIR/codex-models.json" NOW_MS=1000000000000 "$(command -v bash)" "$PICKPROV" 2>/dev/null)"
+  MODELS_FILE="${MODELS_FILE:-$STUB_DIR/provider-models.md}" NOW_MS=1000000000000 \
+  "$(command -v bash)" "$PICKPROV" 2>/dev/null)"
 CODE=$?
 assert_eq "no orca on PATH uses the fallback binary" "codex 0" "$(jq -r .provider <<<"$OUT") $CODE"
 

@@ -101,27 +101,27 @@ watch; GitHub Actions.
   `agent`, `model` (the launch id) for the chosen provider. Board worker `pick-provider [--tier T] [--orchestrator]`
   keeps printing `{"provider","model","tier"}` with `opencodeGo` shown as `opencode`.
 
-- [ ] **Step 1: Write failing load balancer tests:** with a fixture `MODELS_FILE`, `--tier Mid` on the BM-55 quotas
+- [x] **Step 1: Write failing load balancer tests:** with a fixture `MODELS_FILE`, `--tier Mid` on the BM-55 quotas
   prints `chosen` `opencodeGo`, `model` `opencode-go/deepseek-v4-pro`, `agent` `opencode`, `tier` `Mid`; `--tier Low`
   shows `antigravity` skipped with reason `no Low model`; `--tier High` without `--allow-high` exits 2 and stderr
   says the tier needs the user's OK; no `--tier` leaves the output without `model` (old behavior); `--tier bogus`
   exits 2; with `--orchestrator` the tier is ignored.
-- [ ] **Step 2: Run** `bash tests/gusdecool-load-balancer.test.sh`; expect the new cases to fail.
-- [ ] **Step 3: Implement in the load balancer script.** Before scoring, run `resolve-model` per provider; exit 1
+- [x] **Step 2: Run** `bash tests/gusdecool-load-balancer.test.sh`; expect the new cases to fail.
+- [x] **Step 3: Implement in the load balancer script.** Before scoring, run `resolve-model` per provider; exit 1
   adds the provider to the excluded set with reason `no <tier> model`; exit 3 from any provider stops with exit 2;
   exit 2 stops with exit 2. After scoring, merge the chosen provider's `agent` and `launchId` into the result.
   Update the usage header.
-- [ ] **Step 4: Update the board worker tests:** antigravity's model is now `gemini-3.8-flash-medium`; the Codex
+- [x] **Step 4: Update the board worker tests:** antigravity's model is now `gemini-3.8-flash-medium`; the Codex
   model comes from the table (`gpt-6.1-sol`), so drop `CODEX_MODELS_CACHE` and the cache fixture; `--tier High`
   exits 2 both when the cell is `none` for every provider (still exit 1) and when a model exists (exit 2, needs OK);
   the stub `models.md` fixtures gain "Providers" and "Launch IDs" tables.
-- [ ] **Step 5: Rewrite the board worker script** as a thin wrapper: parse `--tier` and `--orchestrator`, call the
+- [x] **Step 5: Rewrite the board worker script** as a thin wrapper: parse `--tier` and `--orchestrator`, call the
   load balancer script with `--reserved claude --tier "$tier"` (plus `--orchestrator`), map its exits and print the
   same shapes as today, including `{"error":"no provider has a <tier> model"}` and
   `{"error":"all providers over cutoff","earliestResetsAt":...}`. With `--orchestrator` print the Mid model of
   claude. Remove `table_cell`, `codex_model` and the hardcoded ids. Default `MODELS_FILE` is the skill's file.
-- [ ] **Step 6: Run** both test files and `bash tests/check-structure.sh`; expect all to pass.
-- [ ] **Step 7: Commit** "Resolve the worker model from the tier in pick-provider".
+- [x] **Step 6: Run** both test files and `bash tests/check-structure.sh`; expect all to pass.
+- [x] **Step 7: Commit** "Resolve the worker model from the tier in pick-provider".
 
 ### Task 3: Claude adapter: agents, hook and installer (judgment)
 
