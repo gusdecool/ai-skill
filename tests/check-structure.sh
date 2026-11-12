@@ -38,21 +38,21 @@ for skill in skills/*/SKILL.md; do
 done
 
 # The HITL status is the only stop marker; the label HITL must not come back, and a high-risk change gets high-risk.
-grep -q 'add high-risk' skills/gusdecool-board-worker/SKILL.md \
-  || fail "gusdecool-board-worker SKILL.md does not add the high-risk label"
-if grep -q 'add HITL' skills/gusdecool-board-worker/SKILL.md; then
-  fail "gusdecool-board-worker SKILL.md adds the HITL label"
+grep -q 'add high-risk' skills/gd-board-worker/SKILL.md \
+  || fail "gd-board-worker SKILL.md does not add the high-risk label"
+if grep -q 'add HITL' skills/gd-board-worker/SKILL.md; then
+  fail "gd-board-worker SKILL.md adds the HITL label"
 fi
 
 # Dispatch needs a tier so the balancer includes the model required by the board worker.
-if ! grep -qE -- '--reserved.*--tier|--tier.*--reserved' skills/gusdecool-board-worker/SKILL.md; then
-  fail "gusdecool-board-worker SKILL.md: --reserved must share a line with --tier"
+if ! grep -qE -- '--reserved.*--tier|--tier.*--reserved' skills/gd-board-worker/SKILL.md; then
+  fail "gd-board-worker SKILL.md: --reserved must share a line with --tier"
 fi
 
 # These skills share one policy owner so tier rules and launch instructions cannot drift.
-policy=skills/gusdecool-model-policy/SKILL.md
-balancer=skills/gusdecool-load-balancer/SKILL.md
-for required in gusdecool-model-policy --tier; do
+policy=skills/gd-model-policy/SKILL.md
+balancer=skills/gd-load-balancer/SKILL.md
+for required in gd-model-policy --tier; do
   grep -q -- "$required" "$balancer" || fail "$balancer: missing $required"
 done
 if grep -q 'tier table' "$balancer"; then
@@ -61,7 +61,7 @@ fi
 for required in resolve-model install-claude-adapter; do
   grep -q -- "$required" "$policy" || fail "$policy: missing $required"
 done
-for skill in "$policy" "$balancer" skills/gusdecool-board-worker/SKILL.md; do
+for skill in "$policy" "$balancer" skills/gd-board-worker/SKILL.md; do
   if grep -q 'agent-standards' "$skill"; then
     fail "$skill: points outside the model policy for tier ownership"
   fi

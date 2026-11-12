@@ -8,33 +8,33 @@ that read the shared skills folder.
 | Skill | Use case | Details |
 |---|---|---|
 | `gd-orchestrate-ticket` | Orchestrate a ticket across repos with Orca workers | [SKILL.md][gd-orchestrate-ticket] |
-| `gusdecool-authoring-skills` | Change a skill by PR in its repo, install | [SKILL.md][gusdecool-authoring-skills] |
-| `gusdecool-board-issue` | Write a board-ready issue (final spec, Auto merge) | [SKILL.md][gusdecool-board-issue] |
-| `gusdecool-board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][gusdecool-board-worker] |
-| `gusdecool-git-workflow` | Git rules: branches, commits, PRs, CI, project board | [SKILL.md][gusdecool-git-workflow] |
-| `gusdecool-infra-conventions` | IaC, CI pinning, migrations, deploy logs | [SKILL.md][gusdecool-infra-conventions] |
-| `gusdecool-load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][gusdecool-load-balancer] |
-| `gusdecool-long-task-communication` | Estimate, follow-ups, at limit | [SKILL.md][gusdecool-long-task-communication] |
-| `gusdecool-model-policy` | Model tier per phase of agent work | [SKILL.md][gusdecool-model-policy] |
-| `gusdecool-mysql-branch` | MySQL branching: one database per git branch | [SKILL.md][gusdecool-mysql-branch] |
-| `gusdecool-project-standards` | Sync stack rules into repo AGENTS.md | [SKILL.md][gusdecool-project-standards] |
-| `gusdecool-rest-api-design` | REST URL, contract, error rules; design first | [SKILL.md][gusdecool-rest-api-design] |
+| `gd-authoring-skills` | Change a skill by PR in its repo, install | [SKILL.md][gd-authoring-skills] |
+| `gd-board-issue` | Write a board-ready issue (final spec, Auto merge) | [SKILL.md][gd-board-issue] |
+| `gd-board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][gd-board-worker] |
+| `gd-git-workflow` | Git rules: branches, commits, PRs, CI, project board | [SKILL.md][gd-git-workflow] |
+| `gd-infra-conventions` | IaC, CI pinning, migrations, deploy logs | [SKILL.md][gd-infra-conventions] |
+| `gd-load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][gd-load-balancer] |
+| `gd-long-task-communication` | Estimate, follow-ups, at limit | [SKILL.md][gd-long-task-communication] |
+| `gd-model-policy` | Model tier per phase of agent work | [SKILL.md][gd-model-policy] |
+| `gd-mysql-branch` | MySQL branching: one database per git branch | [SKILL.md][gd-mysql-branch] |
+| `gd-project-standards` | Sync stack rules into repo AGENTS.md | [SKILL.md][gd-project-standards] |
+| `gd-rest-api-design` | REST URL, contract, error rules; design first | [SKILL.md][gd-rest-api-design] |
 
-Every agent calls a skill by its name, for example `gusdecool-mysql-branch`. Installed as a Claude Code plugin, the
-command is `/gusdecool:gusdecool-<name>`.
+Every agent calls a skill by its name, for example `gd-mysql-branch`. Installed with `npx skills add`, the name is
+the same in every agent. A Claude Code plugin adds its own prefix (see Install).
 
 [gd-orchestrate-ticket]: skills/gd-orchestrate-ticket/SKILL.md
-[gusdecool-authoring-skills]: skills/gusdecool-authoring-skills/SKILL.md
-[gusdecool-board-issue]: skills/gusdecool-board-issue/SKILL.md
-[gusdecool-board-worker]: skills/gusdecool-board-worker/SKILL.md
-[gusdecool-git-workflow]: skills/gusdecool-git-workflow/SKILL.md
-[gusdecool-infra-conventions]: skills/gusdecool-infra-conventions/SKILL.md
-[gusdecool-load-balancer]: skills/gusdecool-load-balancer/SKILL.md
-[gusdecool-long-task-communication]: skills/gusdecool-long-task-communication/SKILL.md
-[gusdecool-model-policy]: skills/gusdecool-model-policy/SKILL.md
-[gusdecool-mysql-branch]: skills/gusdecool-mysql-branch/SKILL.md
-[gusdecool-project-standards]: skills/gusdecool-project-standards/SKILL.md
-[gusdecool-rest-api-design]: skills/gusdecool-rest-api-design/SKILL.md
+[gd-authoring-skills]: skills/gd-authoring-skills/SKILL.md
+[gd-board-issue]: skills/gd-board-issue/SKILL.md
+[gd-board-worker]: skills/gd-board-worker/SKILL.md
+[gd-git-workflow]: skills/gd-git-workflow/SKILL.md
+[gd-infra-conventions]: skills/gd-infra-conventions/SKILL.md
+[gd-load-balancer]: skills/gd-load-balancer/SKILL.md
+[gd-long-task-communication]: skills/gd-long-task-communication/SKILL.md
+[gd-model-policy]: skills/gd-model-policy/SKILL.md
+[gd-mysql-branch]: skills/gd-mysql-branch/SKILL.md
+[gd-project-standards]: skills/gd-project-standards/SKILL.md
+[gd-rest-api-design]: skills/gd-rest-api-design/SKILL.md
 
 ## Config files
 
@@ -50,9 +50,9 @@ for a missing value and save the answer, and never print the file.
 
 ## Board worker config
 
-`gusdecool-board-worker` names no organization. On first use it asks for the owner of your GitHub Project, the project
+`gd-board-worker` names no organization. On first use it asks for the owner of your GitHub Project, the project
 number and the repo owners it may merge in, and saves them in `~/.config/board-worker/config` (run
-`~/.agents/skills/gusdecool-board-worker/scripts/board-setup` to create or change it). The scheduled dispatcher never
+`~/.agents/skills/gd-board-worker/scripts/board-setup` to create or change it). The scheduled dispatcher never
 creates it: without the file its precheck skips the run with one line.
 
 ## Merge gate and flags
@@ -74,7 +74,7 @@ All flags live in `~/.config/board-worker/config`, which the worker must never e
 
 ## UAT section convention
 
-The `gusdecool-board-worker` skill reads each repo's README to learn how its UAT works. Add a `## UAT` section whose
+The `gd-board-worker` skill reads each repo's README to learn how its UAT works. Add a `## UAT` section whose
 first line is one of these forms:
 
 ```
@@ -105,18 +105,21 @@ The board scripts read at most 500 items from the project board (a known limit).
 
 ## Install
 
-You need Docker (for the MySQL your apps use) and git. Pick one way.
+Install with the Vercel skills CLI. It copies the skills into Claude Code, Codex, Antigravity and OpenCode:
 
-### Option A: any agent (Claude Code, Codex and others)
+    npx skills add gusdecool/ai-skill
 
-```
-npx skills add gusdecool/ai-skill
-```
+This is the recommended way. A Claude Code plugin also exists, but it adds its own prefix (/<plugin>:gd-load-balancer)
+and the other three agents cannot read a Claude plugin.
 
-The `skills` tool asks which skills and which agents to install for. Choose the skills you want. It lands in
-`~/.agents/skills/`, which Codex and other agents read, and it is linked into `~/.claude/skills/` for Claude Code.
+Skill names start with gd- to avoid clashing with skills from other providers. Check what is already installed with
+npx skills list before adding a skill from someone else.
 
-### Option B: Claude Code plugin
+The `skills` tool asks which skills and which agents to install for. It lands in `~/.agents/skills/`, which Codex
+and other agents read, and it is linked into `~/.claude/skills/` for Claude Code. You also need Docker (for the
+MySQL your apps use) and git.
+
+### Claude Code plugin (optional)
 
 Inside Claude Code:
 
@@ -125,10 +128,9 @@ Inside Claude Code:
 /plugin install gusdecool@gusdecool
 ```
 
-Plugin skills are namespaced, so the command becomes `/gusdecool:gusdecool-mysql-branch`. Every skill added to this
-repo later shows up as `/gusdecool:gusdecool-<skill-name>`.
+Plugin skills are namespaced, so the command becomes `/gusdecool:gd-mysql-branch`.
 
-### Option C: Codex plugin
+### Codex plugin (optional)
 
 ```
 codex plugin marketplace add gusdecool/ai-skill
@@ -137,12 +139,11 @@ codex plugin add gusdecool
 
 ### Check it works
 
-Restart or open a new agent session and ask: "what skills do you have?" You should see `gusdecool-mysql-branch`.
-To update later, run `npx skills update` (Option A),
-`/plugin marketplace update gusdecool` (Option B)
-or `codex plugin marketplace upgrade` (Option C).
+Restart or open a new agent session and ask: "what skills do you have?" You should see `gd-mysql-branch`.
+To update later, run `npx skills update`, `/plugin marketplace update gusdecool` (Claude plugin)
+or `codex plugin marketplace upgrade` (Codex plugin).
 
-## gusdecool-model-policy
+## gd-model-policy
 
 This skill owns the tier rules and phase tiers. Its `models.md` holds the tier table, provider map and launch ids.
 The load balancer and board worker use this policy to select models.
@@ -150,7 +151,7 @@ The load balancer and board worker use this policy to select models.
 Resolve a provider and tier to a launch id from the installed skill:
 
 ```sh
-~/.agents/skills/gusdecool-model-policy/scripts/resolve-model --provider codex --tier Mid
+~/.agents/skills/gd-model-policy/scripts/resolve-model --provider codex --tier Mid
 ```
 
 The JSON contains `provider`, `agent`, `tier`, `model` (the display name) and `launchId` (the launch value).
@@ -163,7 +164,7 @@ Why: higher cost needs explicit approval.
 After installing or updating the skills with `npx skills update -g`, run once:
 
 ```sh
-~/.agents/skills/gusdecool-model-policy/scripts/install-claude-adapter
+~/.agents/skills/gd-model-policy/scripts/install-claude-adapter
 ```
 
 It links the four `sdd-*` agents into `~/.claude/agents/` and registers a subagent model hook in
@@ -176,7 +177,7 @@ Why: existing agent definitions must survive an install unless replacement is ex
 
 The job runs every Monday and on demand. It reads each provider's pricing page listed in
 `tools/model-watch/models.sources.json`. It adds any model missing from
-`skills/gusdecool-model-policy/models.md` as `name (proposed)` in the tier the price guide suggests, through one PR
+`skills/gd-model-policy/models.md` as `name (proposed)` in the tier the price guide suggests, through one PR
 on the branch `bot/model-watch`. It never merges. If a page cannot be read, it opens a "Model watch failed" issue.
 Why: proposed models need review before they can be selected for work.
 
@@ -188,7 +189,7 @@ pnpm install && pnpm run model-watch
 
 Tests: `pnpm test`.
 
-## gusdecool-mysql-branch
+## gd-mysql-branch
 
 ### Why
 
@@ -272,17 +273,21 @@ Branches that exist only on the remote show as stale.
 
 ```
 bash tests/check-structure.sh
-bash tests/gusdecool-model-policy.test.sh
-bash tests/gusdecool-model-policy-claude.test.sh
-bash tests/gusdecool-load-balancer.test.sh
-bash tests/gusdecool-board-worker.test.sh
-bash tests/gusdecool-mysql-branch.test.sh
+bash tests/gd-model-policy.test.sh
+bash tests/gd-model-policy-claude.test.sh
+bash tests/gd-load-balancer.test.sh
+bash tests/gd-board-worker.test.sh
+bash tests/gd-mysql-branch.test.sh
 pnpm test
 ```
 
 Node 24 or newer and pnpm are required for the model watch tests.
 The MySQL integration tests start a throwaway `mysql:8.0` container and remove it at the end. Docker is required.
 CI runs the same checks plus `shellcheck`.
+
+## UAT
+
+UAT: none
 
 ## License
 

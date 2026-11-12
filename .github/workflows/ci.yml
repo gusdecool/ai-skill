@@ -17,16 +17,16 @@ jobs:
         run: shellcheck skills/*/scripts/*.sh tests/*.sh
       - name: Shellcheck the model policy commands
         run: >-
-          shellcheck skills/gusdecool-model-policy/scripts/*
-          skills/gusdecool-model-policy/adapters/claude/hooks/*
+          shellcheck skills/gd-model-policy/scripts/*
+          skills/gd-model-policy/adapters/claude/hooks/*
       - name: Structure checks
         run: bash tests/check-structure.sh
       - name: Integration tests
-        run: bash tests/gusdecool-mysql-branch.test.sh
+        run: bash tests/gd-mysql-branch.test.sh
       - name: Model policy tests
         run: |
-          bash tests/gusdecool-model-policy.test.sh
-          bash tests/gusdecool-model-policy-claude.test.sh
+          bash tests/gd-model-policy.test.sh
+          bash tests/gd-model-policy-claude.test.sh
       - name: Orchestrate-ticket tests
         run: bash tests/gd-orchestrate-ticket.test.sh
 

@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Creates the gd-board-worker config file with the repo owners the worker may act on, then checks the Jira side.
+# Usage: board-setup [--allowed <owner1,owner2>]
+# Writes ${BOARD_WORKER_CONFIG:-$HOME/.config/board-worker/config} (BOARD_ALLOWED_OWNERS only). Exits 0 when written
+# and Jira answers, 2 on bad input, a missing or invalid Jira config, or a Jira error (the config stays written).
+# board-setup --stats-fields: creates the number fields "Agent minutes", "Agent tokens" and "Agent cost USD" and the
+# multi-value, JQL-searchable field "Agent models" (Labels type, values like claude:sonnet-5.5) when they are missing
+# and puts them on the same screens as "Auto merge" (needs a Jira admin token). Safe to run again.
+# Without a terminal and without the flag it fails instead of waiting for an answer. It never writes or prints the
+# Jira token; that file (${BOARD_JIRA_CONFIG:-$HOME/.config/board-worker/jira}) is created by the user.
+set -euo pipefail
+
+# Creates the four stats fields that do not exist yet and adds them to the screens that hold "Auto merge", so the
+# worker can set them. Prints one line per field. Exits 2 on a Jira error.
+stats_fields() {
+  source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
+  jira_load_config || exit 2
+  local fields name id model screens screen tab kind type searcher
+  fields="$(jira_api GET /rest/api/2/field)" || exit 2
+  model="$(jq -r '[.[] | select(.name == "Auto merge" and .custom == true) | .id] | .[0] // empty' <<<"$fields")"
+  [ -n "$model" ] || die "the 'Auto merge' field is missing; it is the model for the screens"
+  screens="$(jira_api GET "/rest/api/2/field/$model/screens")" || exit 2
+  for name in "Agent minutes" "Agent tokens" "Agent cost USD" "Agent models"; do
+    # The three totals are number fields; "Agent models" is a Labels field so JQL can match one value.
+    kind="float" searcher="exactnumber"
+    if [ "$name" = "Agent models" ]; then kind="labels" searcher="labelsearcher"; fi
+    type="com.atlassian.jira.plugin.system.customfieldtypes:$kind"
+    searcher="com.atlassian.jira.plugin.system.customfieldtypes:$searcher"
+    id="$(jq -r --arg n "$name" '[.[] | select(.name == $n and .custom == true) | .id] | .[0] // empty' <<<"$fields")"
+    if [ -z "$id" ]; then
+      id="$(jira_api POST /rest/api/2/field "$(jq -n --arg n "$name" --arg t "$type" --arg s "$searcher" \
+        '{name: $n, description: "Set by the board worker", type: $t, searcherKey: $s}')" | jq -er '.id')" || exit 2
+      echo "board-setup: created field $name ($id)"
+    else
+      echo "board-setup: field $name exists ($id)"
+    fi
+    # Add the field to the first tab of every screen that holds Auto merge; Jira answers 400 when it is already there.
+    for screen in $(jq -r '.values[].id' <<<"$screens"); do
+      tab="$(jira_api GET "/rest/api/2/screens/$screen/tabs" | jq -r '.[0].id // empty')" || exit 2
+      [ -n "$tab" ] || continue
+      jira_api POST "/rest/api/2/screens/$screen/tabs/$tab/fields" "$(jq -n --arg f "$id" '{fieldId: $f}')" \
+        >/dev/null 2>&1 || true
+    done
+  done
+}
+
+if [ "${1:-}" = "--stats-fields" ]; then
+  [ "$#" -eq 1 ] || die "usage: board-setup --stats-fields"
+  stats_fields
+  exit 0
+fi
+
+file="${BOARD_WORKER_CONFIG:-$HOME/.config/board-worker/config}"
+allowed=""
+
+# Prints an error and exits 2.
+die() { echo "board-setup: $*" >&2; exit 2; }
+
+while [ "$#" -gt 0 ]; do
+  [ "$#" -ge 2 ] || die "usage: board-setup [--allowed <owner1,owner2>]"
+  case "$1" in
+    --allowed) allowed="$2" ;;
+    *) die "usage: board-setup [--allowed <owner1,owner2>]" ;;
+  esac
+  shift 2
+done
+
+# Asks for a value on the terminal; fails when there is no terminal. Args: prompt text.
+ask() {
+  [ -t 0 ] || die "no terminal: pass --allowed"
+  local answer
+  read -r -p "$1 " answer
+  printf '%s' "$answer"
+}
+
+[ -n "$allowed" ] || allowed="$(ask "Repo owners the worker may act on and merge in, comma-separated:")"
+
+mkdir -p "$(dirname "$file")"
+printf 'BOARD_ALLOWED_OWNERS=%s\n' "$allowed" >"$file"
+
+# Re-read the file through the library so a bad value is reported now, not on the first run.
+if ! (BOARD_WORKER_CONFIG="$file" source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh") 2>/dev/null; then
+  rm -f "$file"
+  die "invalid value (allowed owners: letters, digits, '-', comma-separated); nothing written"
+fi
+
+# Check the Jira side; the config stays written either way.
+source "$(dirname "${BASH_SOURCE[0]}")/board-lib.sh"
+jira_file="${BOARD_JIRA_CONFIG:-$HOME/.config/board-worker/jira}"
+if ! jira_load_config 2>/dev/null; then
+  die "wrote $file; Jira config missing or invalid at $jira_file (needs JIRA_SITE, JIRA_EMAIL, JIRA_TOKEN)"
+fi
+me="$(jira_api GET /rest/api/2/myself)" || die "wrote $file; Jira check failed"
+name="$(jq -r '.displayName // empty' <<<"$me" 2>/dev/null)" || name=""
+[ -n "$name" ] || name="$JIRA_EMAIL"
+echo "board-setup: wrote $file; Jira connected as $name"
