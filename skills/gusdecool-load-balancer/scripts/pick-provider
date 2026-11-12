@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Picks the provider for the next worker by remaining quota, using the gusdecool-load-balancer urgency formula. No model needed.
+# Picks the provider for the next worker by remaining quota, using the gusdecool-load-balancer urgency formula.
 # Usage: pick-provider --reserved <provider|none> [--bump <provider>]... [--exclude a,b] [--orchestrator]
-#                      [--config <path>]
+#                      [--config <path>] [--tier Low|Mid|High|Ultra] [--allow-high]
+#   --tier         resolve worker models before scoring; ignored with --orchestrator.
+#   --allow-high   permit High or Ultra after the user approves that tier.
 #   --reserved     the provider the caller runs on; it gets the 80 session / 75 weekly+monthly cutoffs (use `none`
 #                  when the caller is not one of the four providers).
 #   --bump         adds 5 points to that provider's session usedPercent (repeat once per task already picked in
@@ -18,6 +20,7 @@
 # remaining = 100 - usedPercent, timeLeftFraction = (resetsAt - now) / (windowMinutes * 60000) with a floor of 0.05,
 # urgency = remaining / timeLeftFraction; score = highest window urgency; highest score wins; scores within 5 percent
 # tie and go to the reserved provider, then to the listed order. Providers: claude, codex, antigravity, opencodeGo.
+# Env: MODELS_FILE overrides the model table; RESOLVE_MODEL overrides the model-policy resolver.
 # Env: ORCA_BIN (default: orca from PATH, else ORCA_FALLBACK_BIN), NOW_MS (clock in ms, for tests).
 set -euo pipefail
 
@@ -37,8 +40,12 @@ exclude=""
 orchestrator=false
 config=""
 bumps="[]"
+tier=""
+allow_high=false
 while [ $# -gt 0 ]; do
   case "$1" in
+    --tier) [ $# -ge 2 ] && [ -n "$2" ] || die "--tier needs a value"; shift; tier="$1" ;;
+    --allow-high) allow_high=true ;;
     --reserved) shift; reserved="${1:-}" ;;
     --bump) shift; bumps="$(jq -c --arg p "${1:-}" '. + [$p]' <<<"$bumps")" ;;
     --exclude) shift; exclude="${1:-}" ;;
@@ -87,6 +94,26 @@ load_config() {
       else {cutoffs: $wmap, warnings: []} end' "$file" 2>&1 || exit 2
 }
 
+# Resolve each worker model before quotas so approval and table errors cannot look like quota exhaustion.
+models='{}'
+missing_models='{}'
+if [ -n "$tier" ] && [ "$orchestrator" = false ]; then
+  resolver="${RESOLVE_MODEL:-$(dirname "${BASH_SOURCE[0]}")/../../gusdecool-model-policy/scripts/resolve-model}"
+  resolve_args=(--tier "$tier")
+  if [ "$allow_high" = true ]; then resolve_args+=(--allow-high); fi
+  for provider in claude codex antigravity opencodeGo; do
+    status=0
+    resolved="$(bash "$resolver" --provider "$provider" "${resolve_args[@]}")" || status=$?
+    case "$status" in
+      0) models="$(jq -c --arg p "$provider" --argjson m "$resolved" '. + {($p): $m}' <<<"$models")" ;;
+      1) missing_models="$(jq -c --arg p "$provider" --arg t "$tier" \
+           '. + {($p): ("no " + $t + " model")}' <<<"$missing_models")" ;;
+      2 | 3) exit 2 ;;
+      *) die "model resolver failed with exit $status" ;;
+    esac
+  done
+fi
+
 cfg="$(load_config)" || die "bad config: $cfg"
 jq -r '.warnings[] | "pick-provider: warning: " + .' <<<"$cfg" >&2
 
@@ -94,7 +121,8 @@ accounts="$("$(orca_bin)" account list --json)" || die "cannot read quotas"
 now_ms="${NOW_MS:-$(($(date +%s) * 1000))}"
 
 result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson bumps "$bumps" --arg res "$reserved" \
-  --argjson cfg "$cfg" --arg exclude "$exclude" '
+  --argjson cfg "$cfg" --arg exclude "$exclude" \
+  --argjson models "$models" --argjson missing "$missing_models" --arg tier "$tier" '
   # Cutoff for a window: the orchestrator check uses 90; the reserved provider keeps quota for planning and review.
   def cutoff($p; $n):
     if $cfg.cutoffs[$p] != null then $cfg.cutoffs[$p]
@@ -120,6 +148,7 @@ result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson
         freeAt: (if ($blocked | length) > 0 then ($blocked | map(.resetsAt) | max) else null end),
         reason: (if $orch and $p != $res then "not the orchestrator"
                  elif ($excluded | index($p)) != null then "excluded"
+                 elif $missing[$p] != null then $missing[$p]
                  elif $v.status != "ok" then "status " + ($v.status // "missing")
                  elif ($ws | length) == 0 then "no quota windows"
                  elif ($blocked | length) > 0 then
@@ -133,6 +162,8 @@ result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson
   | ([$ok[] | select(.score >= $top * 0.95)] | (map(select(.provider == $res)) + .)[0].provider) as $chosen
   | def cell($p; $n): ([$p.windows[] | select(.window == $n) | .urgency | tostring][0] // "-");
     {reserved: $res, providers: $ps, chosen: $chosen, warnings: $cfg.warnings}
+    + (if $chosen != null and $models[$chosen] != null then
+         {tier: $tier, agent: $models[$chosen].agent, model: $models[$chosen].launchId} else {} end)
     + (if $chosen == null then
          {earliestResetsAt: ([$ps[] | select(.freeAt != null) | .freeAt] | min)} else {} end)
     + {table: (["| Provider | Session | Weekly | Monthly | Score | Result |", "|---|---|---|---|---|---|"]

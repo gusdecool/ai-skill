@@ -1,96 +1,68 @@
 #!/usr/bin/env bash
-# Picks the provider and model for the next worker, by remaining quota, at the asked tier (default Mid).
+# Picks a worker using the shared quota scorer and model-policy tier resolver (default Mid).
 # Usage: pick-provider [--tier Low|Mid|High|Ultra] [--orchestrator]
-# The quota scoring (cutoffs, urgency, tie-break) is done by the gusdecool-load-balancer skill's own pick-provider, so the formula
-# exists once; this script only adds the tier and the model. A provider whose models.md cell for the tier is `none` is
-# left out of the scoring; the tier is never swapped. Only the Mid model ids are held here, so another tier with a model
-# in the table exits 2 until its id is added.
-# --orchestrator considers only claude (the session that runs the ticket) and needs it under 90 in both windows.
-# The reserved 80 / 75 cutoffs do not apply to it: they only keep claude off implementation work, and an orchestrator
-# over them still plans, delegates to other providers and reviews (gusdecool-load-balancer skill, "Pause").
-# Prints {"provider","model","tier"} and exits 0, or {"error","earliestResetsAt"} and exits 1 when every provider is
-# over a cutoff or unavailable. Exits 2 when quotas cannot be read.
-# The "+5 session points per parallel task" rule is not used: this script starts one worker at a time.
-# Env: MODELS_FILE (default: global/models.md in AGENT_STANDARDS_DIR, default ~/Developer/gusdecool/agent-standards),
-# LB_PICK_PROVIDER (default: the gusdecool-load-balancer skill's script next to this skill), ORCA_BIN, ORCA_FALLBACK_BIN
-# (passed through), CODEX_MODELS_CACHE (default ~/.codex/models_cache.json), NOW_MS (clock, for tests).
+# Orchestrator mode checks only claude at its pause cutoff and returns its Mid model.
+# Prints {provider,model,tier}, or {error,earliestResetsAt} for quota exhaustion. Exits 0 selected, 1 unavailable,
+# 2 invalid arguments, unreadable quotas or tables, or a tier requiring the user's OK.
+# Env: MODELS_FILE (default: the model-policy skill's models.md), RESOLVE_MODEL, LB_PICK_PROVIDER,
+# ORCA_BIN, ORCA_FALLBACK_BIN and NOW_MS are passed to the shared scripts.
 set -euo pipefail
 
-# Prints the highest visible Sol model slug from the Codex models cache (compared by version number).
-codex_model() {
-  jq -r '[.models[] | select(.visibility == "list")
-          | (.slug | capture("^gpt-(?<v>[0-9.]+)-sol$")?) as $m | select($m)
-          | {slug: .slug, v: ($m.v | split(".") | map(tonumber))}]
-         | sort_by(.v) | last | .slug // empty' "${CODEX_MODELS_CACHE:-$HOME/.codex/models_cache.json}"
-}
+# Prints an argument error and exits 2.
+die() { echo "pick-provider: $*" >&2; exit 2; }
 
-# Prints the models.md cell for provider $1 (table row name) and tier $2 (Low, Mid, High or Ultra).
-table_cell() {
-  awk -F'|' -v row="$1" -v tier="$2" '
-    function trim(x) { gsub(/^ +| +$/, "", x); return x }
-    trim($2) == "Provider" { for (i = 3; i <= NF; i++) if (trim($i) == tier) col = i }
-    trim($2) == row && col { print trim($col); exit }' "$models_file"
-}
-
+# Parse the worker tier and the optional orchestrator quota check.
 orchestrator=false
 tier=Mid
 while [ $# -gt 0 ]; do
   case "$1" in
     --orchestrator) orchestrator=true ;;
-    --tier) shift; tier="${1:-}" ;;
-    *) echo "pick-provider: unknown argument '$1'" >&2; exit 2 ;;
+    --tier) [ $# -ge 2 ] && [ -n "$2" ] || die "--tier needs a value"; shift; tier="$1" ;;
+    *) die "unknown argument '$1'" ;;
   esac
   shift
 done
 case "$tier" in
   Low | Mid | High | Ultra) ;;
-  *) echo "pick-provider: unknown tier '$tier' (use Low, Mid, High or Ultra)" >&2; exit 2 ;;
+  *) die "unknown tier '$tier' (use Low, Mid, High or Ultra)" ;;
 esac
-models_file="${MODELS_FILE:-${AGENT_STANDARDS_DIR:-$HOME/Developer/gusdecool/agent-standards}/global/models.md}"
 
-now_ms="${NOW_MS:-$(($(date +%s) * 1000))}"
-
-# Scoring is shared with the gusdecool-load-balancer skill. Providers with no model in the asked tier are excluded from it.
-lb_script="${LB_PICK_PROVIDER:-$(dirname "${BASH_SOURCE[0]}")/../../gusdecool-load-balancer/scripts/pick-provider}"
-if [ ! -r "$models_file" ] && [ "$tier" != "Mid" ]; then
-  echo "pick-provider: cannot read $models_file to check tier $tier" >&2; exit 2
-fi
-exclude=""
-if [ -r "$models_file" ]; then
-  for p in claude codex antigravity opencodeGo; do
-    case "$p" in claude) row=Claude ;; codex) row=Codex ;; antigravity) row=Gemini ;; opencodeGo) row=DeepSeek ;; esac
-    if [ "$(table_cell "$row" "$tier")" = "none" ]; then
-      echo "pick-provider: ${p/opencodeGo/opencode} has no $tier model in models.md" >&2
-      exclude="${exclude:+$exclude,}$p"
-    fi
-  done
-fi
-lb_args=(--reserved claude --exclude "$exclude")
+# Delegate model availability and quota selection to the shared scorer.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export MODELS_FILE="${MODELS_FILE:-$script_dir/../../gusdecool-model-policy/models.md}"
+lb_script="${LB_PICK_PROVIDER:-$script_dir/../../gusdecool-load-balancer/scripts/pick-provider}"
+lb_args=(--reserved claude --tier "$tier")
 if [ "$orchestrator" = true ]; then lb_args+=(--orchestrator); fi
 code=0
-scored="$(NOW_MS="$now_ms" bash "$lb_script" "${lb_args[@]}")" || code=$?
-[ "$code" -ne 2 ] || { echo "pick-provider: cannot read quotas" >&2; exit 2; }
+scored="$(bash "$lb_script" "${lb_args[@]}")" || code=$?
+case "$code" in
+  0 | 1) ;;
+  *) exit 2 ;;
+esac
 
+# Preserve the board worker's error shapes, distinguishing absent models from unavailable quota.
 provider="$(jq -r '.chosen // empty' <<<"$scored")"
 if [ -z "$provider" ]; then
-  # Every provider that has quota windows lacking a model in this tier is a tier problem, not a quota problem.
-  if [ "$orchestrator" = false ] && jq -e '[.providers[] | select(.windows | length > 0)]
-    | length > 0 and all(.reason == "excluded")' <<<"$scored" >/dev/null; then
+  if [ "$orchestrator" = false ] && jq -e --arg t "$tier" \
+    '[.providers[] | select(.windows | length > 0)]
+     | length > 0 and all(.reason == ("no " + $t + " model"))' <<<"$scored" >/dev/null; then
     jq -nc --arg t "$tier" '{error: ("no provider has a " + $t + " model")}'
     exit 1
   fi
   jq -c '{error: "all providers over cutoff", earliestResetsAt}' <<<"$scored"
   exit 1
 fi
-provider="${provider/opencodeGo/opencode}"
 
-if [ "$tier" != "Mid" ]; then
-  echo "pick-provider: no model id is held for $provider at tier $tier" >&2; exit 2
+# Resolve the orchestrator's Mid model separately because its quota check ignores worker tiers.
+if [ "$orchestrator" = true ]; then
+  tier=Mid
+  resolver="${RESOLVE_MODEL:-$script_dir/../../gusdecool-model-policy/scripts/resolve-model}"
+  resolved="$(bash "$resolver" --provider "$provider" --tier "$tier")" || exit 2
+  model="$(jq -r .launchId <<<"$resolved")"
+else
+  model="$(jq -r .model <<<"$scored")"
 fi
-case "$provider" in
-  claude) model="claude-sonnet-5-5" ;;
-  codex) model="$(codex_model)"; [ -n "$model" ] || { echo "pick-provider: no Sol model in cache" >&2; exit 2; } ;;
-  antigravity) model="gemini-3.8-flash" ;;
-  opencode) model="opencode-go/deepseek-v4-pro" ;;
-esac
-jq -nc --arg p "$provider" --arg m "$model" --arg t "$tier" '{provider: $p, model: $m, tier: $t}'
+
+# Keep the board worker's public provider spelling and compact JSON shape.
+jq -nc --arg p "${provider/opencodeGo/opencode}" --arg m "$model" --arg t "$tier" \
+  '{provider: $p, model: $m, tier: $t}'

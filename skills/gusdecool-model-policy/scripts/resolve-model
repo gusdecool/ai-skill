@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Resolves the first usable model for a provider and tier from the skill's three model tables.
+# Usage: resolve-model --provider <key> --tier <Low|Mid|High|Ultra> [--allow-high]
+# Env: MODELS_FILE overrides ../models.md. Exits: 0 found, 1 unavailable, 2 invalid input, 3 approval required.
+set -euo pipefail
+
+# Prints a usage or table error and exits with the argument-error status.
+die() { echo "resolve-model: $*" >&2; exit 2; }
+
+# Read flags before applying the tier gate so invalid arguments always exit 2.
+provider=""
+tier=""
+allow_high=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --provider | --tier)
+      [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"
+      case "$1" in
+        --provider) provider="$2" ;;
+        --tier) tier="$2" ;;
+      esac
+      shift 2
+      ;;
+    --allow-high) allow_high=true; shift ;;
+    *) die "unknown argument '$1'" ;;
+  esac
+done
+case "$provider" in
+  claude | codex | antigravity | opencodeGo) ;;
+  *) die "--provider is required: claude, codex, antigravity or opencodeGo" ;;
+esac
+case "$tier" in
+  Low | Mid | High | Ultra) ;;
+  *) die "--tier is required: Low, Mid, High or Ultra" ;;
+esac
+
+# Gate expensive tiers before looking at the table, including unavailable models.
+if { [ "$tier" = High ] || [ "$tier" = Ultra ]; } && [ "$allow_high" = false ]; then
+  echo "resolve-model: $tier needs the user's OK; pass --allow-high after approval" >&2
+  exit 3
+fi
+
+# Load all tables before choosing, allowing their sections to appear in any order.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+models_file="${MODELS_FILE:-$script_dir/../models.md}"
+[ -f "$models_file" ] && [ -r "$models_file" ] || die "cannot read table: $models_file"
+resolved="$(awk -F '|' -v provider="$provider" -v tier="$tier" '
+  # Removes surrounding whitespace from a table cell.
+  function trim(value) {
+    sub(/^[[:space:]]+/, "", value)
+    sub(/[[:space:]]+$/, "", value)
+    return value
+  }
+  /^#/ { table = "" }
+  /^\|/ {
+    for (i = 2; i < NF; i++) $i = trim($i)
+    if ($2 == "Provider" && $3 == "Low" && $4 == "Mid" && $5 == "High" && $6 == "Ultra") {
+      table = "tiers"
+      has_tiers = 1
+      for (i = 3; i <= 6; i++) if ($i == tier) column = i
+      next
+    }
+    if ($2 == "Quota provider" && $3 == "Agent CLI" && $4 == "Table rows") {
+      table = "providers"
+      has_providers = 1
+      next
+    }
+    if ($2 == "Provider" && $3 == "Model" && $4 == "Launch id") {
+      table = "launch"
+      has_launch = 1
+      next
+    }
+    if ($2 ~ /^[-:]+$/) next
+    if (table == "tiers") cells[$2] = $column
+    if (table == "providers" && $2 == provider) {
+      agent = $3
+      rows = $4
+    }
+    if (table == "launch") {
+      gsub(/`/, "", $4)
+      ids[$2 SUBSEP $3] = $4
+    }
+  }
+  END {
+    if (!has_tiers || !has_providers || !has_launch || agent == "" || rows == "") exit 2
+    row_count = split(rows, row_names, ",")
+    for (r = 1; r <= row_count; r++) {
+      row = trim(row_names[r])
+      model_count = split(cells[row], models, ",")
+      for (m = 1; m <= model_count; m++) {
+        model = trim(models[m])
+        if (model == "" || model == "none" || model ~ /\(proposed\)/) continue
+        id = ids[row SUBSEP model]
+        if (id == "" || id == "none") continue
+        printf "%s\t%s\t%s\n", agent, model, id
+        exit 0
+      }
+    }
+    exit 1
+  }
+' "$models_file")" || {
+  status=$?
+  [ "$status" -ne 2 ] || die "missing or invalid model tables: $models_file"
+  exit "$status"
+}
+
+# Serialize the selected model as a compact JSON line with stable key order.
+IFS=$'\t' read -r agent model launch_id <<<"$resolved"
+jq -cn --arg provider "$provider" --arg agent "$agent" --arg tier "$tier" \
+  --arg model "$model" --arg launchId "$launch_id" \
+  '{provider: $provider, agent: $agent, tier: $tier, model: $model, launchId: $launchId}'

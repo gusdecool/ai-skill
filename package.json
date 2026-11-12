@@ -1,0 +1,13 @@
+{
+  "name": "ai-skill",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test \"tools/model-watch/*.test.ts\"",
+    "model-watch": "node tools/model-watch/model-watch.ts"
+  }
+}

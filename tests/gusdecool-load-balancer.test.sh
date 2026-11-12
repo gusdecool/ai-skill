@@ -40,10 +40,52 @@ cat >"$STUB_DIR/bm55.json" <<JSON
   "opencodeGo":{"status":"ok","session":$(win 0 300 240),"weekly":$(win 0 10080 9600),"monthly":$(win 0 43200 14700)}}}}
 JSON
 
+cat >"$STUB_DIR/models.md" <<'TABLE'
+# Fixture
+
+| Provider | Low | Mid | High | Ultra |
+|---|---|---|---|---|
+| Claude | Haiku 5.5 | Sonnet 5.5 | Opus 5.5 | Fable 5.2 |
+| Codex | Luna, Terra | Sol | none | Astra |
+| Gemini | 3.5 Flash-Lite, 3.6 Flash | 3.8 Flash | none | none |
+| DeepSeek | V4.1 Flash | V4 Pro | none | none |
+| Kimi | K2.6 | K2.7 Code | none | none |
+
+## Providers
+
+| Quota provider | Agent CLI | Table rows |
+|---|---|---|
+| claude | claude | Claude |
+| codex | codex | Codex |
+| antigravity | agy | Gemini |
+| opencodeGo | opencode | DeepSeek, Kimi |
+
+## Launch IDs
+
+| Provider | Model | Launch id |
+|---|---|---|
+| Claude | Haiku 5.5 | `claude-haiku-5-5` |
+| Claude | Sonnet 5.5 | `claude-sonnet-5-5` |
+| Claude | Opus 5.5 | `claude-opus-5-5` |
+| Claude | Fable 5.2 | `claude-fable-5-2` |
+| Codex | Luna | `gpt-6-luna` |
+| Codex | Terra | `gpt-6.1-terra` |
+| Codex | Sol | `gpt-6.1-sol` |
+| Codex | Astra | `gpt-6-astra` |
+| Gemini | 3.5 Flash-Lite | none |
+| Gemini | 3.6 Flash | none |
+| Gemini | 3.8 Flash | `gemini-3.8-flash-medium` |
+| DeepSeek | V4.1 Flash | `opencode-go/deepseek-v4.1-flash` |
+| DeepSeek | V4 Pro | `opencode-go/deepseek-v4-pro` |
+| Kimi | K2.6 | none |
+| Kimi | K2.7 Code | `opencode-go/kimi-k2.7-code` |
+TABLE
+export MODELS_FILE="$STUB_DIR/models.md"
+
 # Runs pick-provider against a fixture, storing stdout in OUT and the exit code in CODE.
 run() {
   OUT="$(HOME="$STUB_DIR/home" ACCOUNTS_FIXTURE="$1" ORCA_BIN="$STUB_DIR/orca" NOW_MS=$NOW \
-    bash "$PICK" "${@:2}" 2>/dev/null)"
+    bash "$PICK" "${@:2}" 2>"$STUB_DIR/stderr")"
   CODE=$?
 }
 
@@ -98,6 +140,30 @@ assert_eq "orchestrator mode picks claude at weekly 79" "claude" "$(jq -r .chose
 # A missing --reserved is a usage error, so the caller cannot skip naming its provider.
 run "$STUB_DIR/bm55.json"
 assert_eq "missing --reserved exits 2" "2" "$CODE"
+
+# Tier resolution adds launch details while preserving quota selection.
+run "$STUB_DIR/bm55.json" --reserved claude --tier Mid
+assert_eq "Mid picks the scored provider and its launch details" \
+  "0 opencodeGo opencode-go/deepseek-v4-pro opencode Mid" \
+  "$CODE $(jq -r '[.chosen, .model, .agent, .tier] | join(" ")' <<<"$OUT")"
+run "$STUB_DIR/bm55.json" --reserved claude --tier Low
+assert_eq "Low skips antigravity without a usable model" "no Low model" \
+  "$(jq -r '.providers[] | select(.provider == "antigravity") | .reason' <<<"$OUT")"
+run "$STUB_DIR/bm55.json" --reserved claude --tier High
+assert_eq "High requires approval" "2" "$CODE"
+assert_eq "High refusal asks for the user's OK" "1" "$(grep -c "needs the user's OK" "$STUB_DIR/stderr")"
+run "$STUB_DIR/bm55.json" --reserved claude --tier High --allow-high
+assert_eq "approved High resolves its model" "1 no High model" \
+  "$CODE $(jq -r '.providers[] | select(.provider == "codex") | .reason' <<<"$OUT")"
+run "$STUB_DIR/bm55.json" --reserved claude
+assert_eq "without a tier no model is added" "false" "$(jq 'has("model")' <<<"$OUT")"
+run "$STUB_DIR/bm55.json" --reserved claude --tier bogus
+assert_eq "unknown tier exits 2" "2" "$CODE"
+run "$STUB_DIR/bm55.json" --reserved claude --tier High --orchestrator
+assert_eq "orchestrator ignores the tier" "0 claude false" \
+  "$CODE $(jq -r '.chosen + " " + (has("model") | tostring)' <<<"$OUT")"
+MODELS_FILE="$STUB_DIR/missing.md" run "$STUB_DIR/bm55.json" --reserved claude --tier Mid
+assert_eq "unreadable model table exits 2" "2" "$CODE"
 
 # Config: user cutoffs (fractions of used quota, applied to every window).
 cfg() { echo "$1" >"$STUB_DIR/cfg.json"; }

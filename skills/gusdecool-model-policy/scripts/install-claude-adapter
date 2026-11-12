@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Installs the Claude agent links and guard without replacing unrelated settings or agents.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AGENTS="$ROOT/adapters/claude/agents"
+GUARD="$ROOT/adapters/claude/hooks/guard-subagent-model"
+DEST="${CLAUDE_HOME:-$HOME/.claude}"
+SETTINGS="$DEST/settings.json"
+UNINSTALL=false
+FORCE=false
+for arg in "$@"; do
+  case "$arg" in
+    --uninstall) UNINSTALL=true ;;
+    --force) FORCE=true ;;
+    *) echo "Unknown argument: $arg" >&2; exit 1 ;;
+  esac
+done
+
+# Recognizes only links targeting files within this adapter's agents directory.
+own_link() {
+  [ -L "$1" ] || return 1
+  case "$(readlink "$1")" in "$AGENTS/"*) return 0 ;; *) return 1 ;; esac
+}
+
+# Preflight every destination before changing any link or settings file.
+if ! "$UNINSTALL"; then
+  for source in "$AGENTS/"*.md; do
+    target="$DEST/agents/$(basename "$source")"
+    if { [ -e "$target" ] || [ -L "$target" ]; } && ! own_link "$target" && ! "$FORCE"; then
+      echo "Refusing to replace $target; use --force to back it up first." >&2
+      exit 1
+    fi
+  done
+fi
+settings='{}'
+if [ -e "$SETTINGS" ]; then settings="$(cat "$SETTINGS")"; fi
+if ! jq -e -s 'length == 1 and (.[0] | type == "object" and
+  ((.hooks == null) or (.hooks | type == "object")) and
+  ((.hooks.PreToolUse == null) or (.hooks.PreToolUse | type == "array")))' \
+  <<<"$settings" >/dev/null; then
+  echo "Invalid settings: $SETTINGS" >&2
+  exit 1
+fi
+entry="$(jq -nc --arg guard "$GUARD" \
+  '{matcher:"Agent|Task",hooks:[{type:"command",command:$guard}]}')"
+
+# Change only this adapter's complete entry, preserving every unrelated settings value.
+if "$UNINSTALL"; then
+  updated="$(jq --argjson entry "$entry" '
+    if .hooks.PreToolUse == null then .
+    else .hooks.PreToolUse |= map(select(. != $entry)) end' <<<"$settings")"
+else
+  updated="$(jq --argjson entry "$entry" '
+    .hooks.PreToolUse = ((.hooks.PreToolUse // []) |
+      if index($entry) == null then . + [$entry] else . end)' <<<"$settings")"
+fi
+
+# Remove only owned links, or back up conflicting files before installing absolute links.
+if "$UNINSTALL"; then
+  for source in "$AGENTS/"*.md; do
+    target="$DEST/agents/$(basename "$source")"
+    if own_link "$target"; then rm "$target"; fi
+  done
+else
+  mkdir -p "$DEST/agents"
+  for source in "$AGENTS/"*.md; do
+    target="$DEST/agents/$(basename "$source")"
+    if own_link "$target"; then continue; fi
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      cp -P "$target" "$target.bak"
+      rm "$target"
+    fi
+    ln -s "$source" "$target"
+  done
+fi
+
+# Back up settings only when their content changes, then write through any settings symlink.
+if [ "$(jq -cS . <<<"$settings")" != "$(jq -cS . <<<"$updated")" ]; then
+  mkdir -p "$DEST"
+  if [ -e "$SETTINGS" ]; then cp "$SETTINGS" "$SETTINGS.bak"; fi
+  temp="$(mktemp "$DEST/.settings.XXXXXX")"
+  # Removes an unfinished settings file if validation or writing fails.
+  # shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
+  cleanup() { rm -f "$temp"; }
+  trap cleanup EXIT
+  printf '%s\n' "$updated" >"$temp"
+  jq -e . "$temp" >/dev/null
+  cat "$temp" >"$SETTINGS"
+  rm "$temp"
+fi

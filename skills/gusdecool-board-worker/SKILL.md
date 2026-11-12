@@ -74,8 +74,8 @@ Done status, secrets or any other repo. Never move a ticket to Done: only the hu
 - `~/.agents/skills/gusdecool-board-worker/scripts/board-run-stats <worktree-path> --since <ISO start time>`: prints the run's
   minutes, tokens and estimated cost as JSON (read from the Claude Code session logs, priced with
   `model-prices.tsv`). Pipe it into `board-ticket-cli stats <key>`, which adds the numbers to the ticket's
-  "Agent minutes", "Agent tokens" and "Agent cost USD" fields, adds the models used (`provider:model`, for example
-  `claude:sonnet-5.5`) to the multi-value field "Agent models", appends the run with its per-model numbers to the Jira
+  "Agent minutes", "Agent tokens" and "Agent cost USD" fields, adds the models used (`provider:model`)
+  to the multi-value field "Agent models", appends the run with its per-model numbers to the Jira
   issue property `agent.runs` and posts a summary comment. Both only report: they exit 0 or print one stderr line, and
   a failure never changes how the ticket ends. `board-ticket-cli runs <key>` prints the `agent.runs` property.
 - `~/.agents/skills/gusdecool-board-worker/scripts/board-watch <dispatch>:<provider> ...`: waits (no model, no tokens) and
@@ -133,16 +133,18 @@ stop (see "Stopping").
 
    **You are the orchestrator.** When the plan has two or more tasks, do not edit product code yourself: follow the
    `gusdecool-load-balancer` skill (tier rules, provider choice, takeover). Before the first product-code edit, load the skill,
-   run the `gusdecool-load-balancer` skill's `scripts/pick-provider --reserved <your provider>` (never choose a provider by hand),
-   and post a ticket comment beginning `Dispatch:` that names the chosen provider and model for each task and includes
-   the script's score table (its `table` field, one table per dispatch). Why: a reviewer can then see the formula ran;
+   run the `gusdecool-load-balancer` skill's `scripts/pick-provider --reserved <your provider> --tier <tier>`
+   (never choose a provider by hand), and post a ticket comment beginning `Dispatch:` that names the chosen provider
+   and model for each task and includes the script's score table (its `table` field, one table per dispatch).
+   Why: a reviewer can then see the formula ran;
    in BM-55 the agent dispatched to the first provider under its cutoffs and skipped the formula.
    A worker that coded inline skipped the balancer and used one provider, so multi-task plans must be dispatched.
    Run `board-plan-check <ticket-key>` before the first product-code edit; if it exits 1, stop (see Stopping).
    It also fails when the `Dispatch:` comment has no score table.
    Dispatch each task as a worker with
-   `orca orchestration worker-start --worktree current`, an explicit model (the launch id from `models.md`, never the
-   display name; a "model not supported" error in the first seconds is a launch error: fix the id and restart on the
+   `orca orchestration worker-start --worktree current`, an explicit model (the `model` field printed by
+   `scripts/pick-provider`, never an id typed by hand; a "model not supported" error in the first seconds is a launch
+   error: fix the id and restart on the
    same provider, see the `gusdecool-load-balancer` skill; why: BM-56) and the plan file, then run `board-watch`
    in the background for all running workers and wait for it. Use no tokens while it waits.
    - On `settled`: read the worker's output, check its work with the repo's gates, confirm the plan box is ticked,
