@@ -215,7 +215,7 @@ Verification blocked: board-worker tests fail two orchestrator assertions; see t
   adapter install command (`~/.agents/skills/gusdecool-model-policy/scripts/install-claude-adapter`) and what it
   changes, the weekly model watch (text from the `agent-standards` README, paths updated). Add the two new test
   files and `pnpm test` to "Development".
-- [ ] **Step 6: Run** `bash tests/check-structure.sh` and all four shell test files; expect passes.
+- [x] **Step 6: Run** `bash tests/check-structure.sh` and all four shell test files; expect passes.
 - [x] **Step 7: Commit** "Point the load balancer and board worker at the model policy".
 
 ### Task 6: Pull request for this repo
