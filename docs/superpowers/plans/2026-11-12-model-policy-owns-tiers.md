@@ -230,10 +230,10 @@ Verification blocked: board-worker tests fail two orchestrator assertions; see t
 Separate repository, separate worktree created through Orca (its main checkout backs the live `~/.claude/CLAUDE.md`
 symlink, so it must not change branch).
 
-- [ ] **Step 1:** Delete `global/models.md`, `global/models.sources.json`, `scripts/model-watch.ts`,
+- [x] **Step 1:** Delete `global/models.md`, `global/models.sources.json`, `scripts/model-watch.ts`,
   `scripts/model-watch.test.ts`, `.github/workflows/model-watch.yml`; remove the `model-watch` package script and the
   README section "Weekly model watch".
-- [ ] **Step 2:** `global/AGENTS.md` section 7: remove the "Model tiers" bullet. Leave sections 6 and 8 as they are.
-- [ ] **Step 3:** Run `pnpm test`; open the PR. Do not merge.
+- [x] **Step 2:** `global/AGENTS.md` section 7: remove the "Model tiers" bullet. Leave sections 6 and 8 as they are.
+- [x] **Step 3:** Run `pnpm test`; open the PR. Do not merge.
 - [ ] **Step 4:** After both merges: `npx skills update -g`, run `install-claude-adapter`, `git pull` in the
   standards clone.
