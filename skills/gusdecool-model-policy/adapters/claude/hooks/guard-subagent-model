@@ -3,6 +3,13 @@
 set -euo pipefail
 set -E
 
+# Deny without jq because an empty hook response would allow the dispatch through.
+if ! command -v jq >/dev/null 2>&1; then
+  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny",' \
+    '"permissionDecisionReason":"jq is required by the gusdecool-model-policy guard."}}'
+  exit 0
+fi
+
 # Emits the Claude permission envelope, always with a successful hook exit status.
 decision() {
   jq -nc --arg result "$1" --arg reason "$2" \
@@ -41,7 +48,11 @@ fi
 # Explicit models override project and user definitions; project definitions take precedence.
 if [ -z "$model" ] && [ -n "$agent" ]; then
   case "$agent" in
-    *[!a-zA-Z0-9_-]*) decision deny 'Invalid agent type; load gusdecool-model-policy before dispatching.' ;;
+    *[!a-zA-Z0-9_-]*)
+      reason='This agent type has no local definition to read a model from; '
+      reason+='pass model sonnet or haiku explicitly and load gusdecool-model-policy.'
+      decision deny "$reason"
+      ;;
   esac
   definition="${CLAUDE_AGENTS_DIR:-$HOME/.claude/agents}/$agent.md"
   if [ -n "$cwd" ] && [ -f "$cwd/.claude/agents/$agent.md" ]; then

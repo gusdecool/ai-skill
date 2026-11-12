@@ -133,9 +133,10 @@ stop (see "Stopping").
 
    **You are the orchestrator.** When the plan has two or more tasks, do not edit product code yourself: follow the
    `gusdecool-load-balancer` skill (tier rules, provider choice, takeover). Before the first product-code edit, load the skill,
-   run the `gusdecool-load-balancer` skill's `scripts/pick-provider --reserved <your provider>` (never choose a provider by hand),
-   and post a ticket comment beginning `Dispatch:` that names the chosen provider and model for each task and includes
-   the script's score table (its `table` field, one table per dispatch). Why: a reviewer can then see the formula ran;
+   run the `gusdecool-load-balancer` skill's `scripts/pick-provider --reserved <your provider> --tier <tier>`
+   (never choose a provider by hand), and post a ticket comment beginning `Dispatch:` that names the chosen provider
+   and model for each task and includes the script's score table (its `table` field, one table per dispatch).
+   Why: a reviewer can then see the formula ran;
    in BM-55 the agent dispatched to the first provider under its cutoffs and skipped the formula.
    A worker that coded inline skipped the balancer and used one provider, so multi-task plans must be dispatched.
    Run `board-plan-check <ticket-key>` before the first product-code edit; if it exits 1, stop (see Stopping).

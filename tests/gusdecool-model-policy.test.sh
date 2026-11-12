@@ -79,6 +79,15 @@ assert_eq "Mid JSON is compact and ordered" "$expected" "$OUT"
 run --provider codex --tier Low
 assert_eq "Low uses the first model in a cell" '0 gpt-6-luna' "$CODE $(jq -r .launchId <<<"$OUT")"
 
+# A later model in the same cell remains usable when the first has no launch id.
+sed 's/| Codex | Luna | `gpt-6-luna` |/| Codex | Luna | none |/' \
+  "$FIXTURES/models.md" >"$FIXTURES/same-cell-fallback.md"
+TABLE="$FIXTURES/same-cell-fallback.md"
+run --provider codex --tier Low
+assert_eq "same cell skips first model without launch id" '0 Terra gpt-6.1-terra' \
+  "$CODE $(jq -r '.model + " " + .launchId' <<<"$OUT")"
+TABLE="$FIXTURES/models.md"
+
 run --provider antigravity --tier Low
 assert_eq "models with no launch ids exit 1" 1 "$CODE"
 assert_eq "unavailable models produce no stdout" '' "$OUT"

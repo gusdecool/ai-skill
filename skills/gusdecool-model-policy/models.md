@@ -2,10 +2,11 @@
 
 Last checked: 2026-11-10
 
-One scale for every AI provider: Low, Mid, High, Ultra. Rules elsewhere (the `gusdecool-model-policy` skill, skills)
-speak only in
-tiers; this file is the only place that names models. A cell holds model names separated by `, ` or the word `none`.
+One scale for every AI provider: Low, Mid, High, Ultra. Rules elsewhere speak only in tiers; this file is the only
+place that names models. A cell holds model names separated by `, ` or the word `none`.
 A model added by the weekly job is written `name (proposed)`.
+After removing a `(proposed)` marker, add a row for the model to the Launch IDs table, because `resolve-model` skips
+models with no launch id.
 
 | Provider | Low | Mid | High | Ultra |
 |---|---|---|---|---|

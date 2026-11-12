@@ -56,6 +56,27 @@ hook 'explicit mid' "$(payload unknown sonnet)" allow
 hook 'definition low' "$(payload pinned '')" allow
 pin "$CLAUDE_AGENTS_DIR/pinned.md" sonnet
 hook 'definition mid' "$(payload pinned '')" allow
+hook 'plugin agent without model' "$(payload superpowers:code-reviewer '')" deny
+assert_eq 'plugin denial explains explicit model and skill' true \
+  "$(jq '.hookSpecificOutput.permissionDecisionReason | contains("model") and
+    contains("sonnet") and contains("haiku") and contains("gusdecool-model-policy")' <<<"$OUT")"
+hook 'plugin agent with explicit model' "$(payload superpowers:code-reviewer sonnet)" allow
+hook 'relative traversal agent' "$(payload ../x '')" deny
+hook 'absolute path agent' "$(payload /etc/passwd '')" deny
+
+# A restricted executable path reproduces missing jq without touching the host installation.
+mkdir -p "$TMP/no-jq"
+for tool in bash cat awk; do ln -sf "$(command -v "$tool")" "$TMP/no-jq/$tool"; done
+no_jq_payload="$(payload unknown sonnet)"
+OUT="$(PATH="$TMP/no-jq" bash "$GUARD" <<<"$no_jq_payload" 2>"$TMP/stderr")"
+CODE=$?
+assert_eq 'missing jq exits zero' 0 "$CODE"
+assert_eq 'missing jq denies dispatch' deny "$(jq -r '.hookSpecificOutput.permissionDecision' <<<"$OUT")"
+assert_eq 'missing jq keeps event envelope' PreToolUse "$(jq -r '.hookSpecificOutput.hookEventName' <<<"$OUT")"
+assert_eq 'missing jq explains required dependency and guard' true \
+  "$(jq '.hookSpecificOutput.permissionDecisionReason | contains("jq") and
+    contains("required") and contains("gusdecool-model-policy")' <<<"$OUT")"
+
 hook 'missing definition' "$(payload unknown '')" deny
 assert_eq 'deny explains inheritance and skill' true \
   "$(jq '.hookSpecificOutput.permissionDecisionReason | contains("inherit") and
@@ -151,6 +172,30 @@ CLAUDE_HOME="$TMP/fresh" install_adapter
 assert_eq 'missing settings created' 0 "$CODE"
 assert_eq 'new settings contain guard' "$GUARD" \
   "$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$TMP/fresh/settings.json")"
+
+# Each operation must write through an existing settings link to its external target.
+for operation in install uninstall; do
+  linked_home="$TMP/linked-$operation"
+  linked_target="$TMP/$operation-settings.json"
+  mkdir -p "$linked_home"
+  if [ "$operation" = install ]; then
+    cp "$TMP/original.json" "$linked_target"
+  else
+    cp "$TMP/installed.json" "$linked_target"
+  fi
+  ln -s "$linked_target" "$linked_home/settings.json"
+  if [ "$operation" = install ]; then
+    CLAUDE_HOME="$linked_home" install_adapter
+    expected_count=1
+  else
+    CLAUDE_HOME="$linked_home" install_adapter --uninstall
+    expected_count=0
+  fi
+  assert_eq "$operation linked settings succeeds" 0 "$CODE"
+  assert_eq "$operation preserves settings symlink" "$linked_target" "$(readlink "$linked_home/settings.json")"
+  assert_eq "$operation updates settings target" "$expected_count" \
+    "$(jq '[.hooks.PreToolUse[] | select(.matcher == "Agent|Task")] | length' "$linked_target")"
+done
 
 # Compares each shipped alias with the first word in its real Claude tier cell.
 for name in sdd-implementer sdd-implementer-sonnet sdd-task-reviewer sdd-final-reviewer; do

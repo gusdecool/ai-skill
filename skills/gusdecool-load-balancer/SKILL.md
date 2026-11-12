@@ -127,7 +127,8 @@ If no worker provider is eligible, the tasks wait for the earliest `resetsAt`: s
   way "Agent models" and `agent.runs` show which models did the work. Skip it for a task that is not a ticket.
 - A worker that errors in its first seconds with a "model not supported" or "unknown model" message is a launch error,
   not a provider limit. Fix the id in `gusdecool-model-policy/models.md`, rerun `pick-provider --tier`, and restart
-  on the same provider; do not switch providers. Why: in BM-56 switching hid a typo and moved the work to a provider the balancer did not pick.
+  on the same provider; do not switch providers. Why: in BM-56 switching hid a typo and moved the work to a provider
+  the balancer did not pick.
 - Workers share the session's worktree and get disjoint files.
 - After a worker reports, check its work yourself with the repo's own gates. A "failed" can come only from a
   repo-wide coverage threshold tripping on a single-file test run; run single files with coverage off.

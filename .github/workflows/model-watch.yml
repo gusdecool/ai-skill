@@ -56,6 +56,7 @@ jobs:
             echo "The weekly model watch found models that are not in skills/gusdecool-model-policy/models.md."
             echo "They are added as proposed, in the tier the price guide suggests. Check each tier and name,"
             echo "remove the proposed marker, then merge. The job never merges."
+            echo "After removing (proposed), add a Launch IDs row; resolve-model skips models with no launch id."
             echo
             cat "$RUNNER_TEMP/summary.txt"
           } > "$RUNNER_TEMP/body.md"

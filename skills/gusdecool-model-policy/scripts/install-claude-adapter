@@ -75,15 +75,17 @@ else
   done
 fi
 
-# Back up settings only when their content changes, then replace them atomically.
+# Back up settings only when their content changes, then write through any settings symlink.
 if [ "$(jq -cS . <<<"$settings")" != "$(jq -cS . <<<"$updated")" ]; then
   mkdir -p "$DEST"
   if [ -e "$SETTINGS" ]; then cp "$SETTINGS" "$SETTINGS.bak"; fi
   temp="$(mktemp "$DEST/.settings.XXXXXX")"
-  # Removes an unfinished settings file if writing or replacement fails.
+  # Removes an unfinished settings file if validation or writing fails.
   # shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
   cleanup() { rm -f "$temp"; }
   trap cleanup EXIT
   printf '%s\n' "$updated" >"$temp"
-  mv "$temp" "$SETTINGS"
+  jq -e . "$temp" >/dev/null
+  cat "$temp" >"$SETTINGS"
+  rm "$temp"
 fi

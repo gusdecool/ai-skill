@@ -44,6 +44,11 @@ if grep -q 'add HITL' skills/gusdecool-board-worker/SKILL.md; then
   fail "gusdecool-board-worker SKILL.md adds the HITL label"
 fi
 
+# Dispatch needs a tier so the balancer includes the model required by the board worker.
+if ! grep -qE -- '--reserved.*--tier|--tier.*--reserved' skills/gusdecool-board-worker/SKILL.md; then
+  fail "gusdecool-board-worker SKILL.md: --reserved must share a line with --tier"
+fi
+
 # These skills share one policy owner so tier rules and launch instructions cannot drift.
 policy=skills/gusdecool-model-policy/SKILL.md
 balancer=skills/gusdecool-load-balancer/SKILL.md
@@ -69,7 +74,7 @@ done
 
 while IFS= read -r file; do
   # Agent prompt descriptions stay on one line to preserve their frontmatter.
-  # Model source patterns intentionally stay readable and may exceed the line limit.
+  # A model source pattern inside a JSON string cannot be wrapped across lines.
   case "$file" in
     skills/*/SKILL.md|skills/*/adapters/*/agents/*.md|tools/model-watch/models.sources.json) continue ;;
   esac
