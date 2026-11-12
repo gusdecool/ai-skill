@@ -77,8 +77,8 @@ Decide where work is tracked before you create any issue, ticket, epic or card.
 ## Project board
 
 Board steps are optional, and only for a repo that tracks work on GitHub. They are driven by a config file
-`~/.config/git-workflow/config` (plain `KEY=value`, like `~/.config/board-worker/config`). The values are owner-specific, so they live on the user's machine, never in this
-skill.
+`~/.config/git-workflow/config` (plain `KEY=value`, like `~/.config/board-worker/config`).
+The values are owner-specific, so they live on the user's machine, never in this skill.
 
 | Key | Meaning | Example |
 |---|---|---|
