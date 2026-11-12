@@ -55,7 +55,7 @@ watch; GitHub Actions.
   table, 3 High or Ultra without `--allow-high`. Env `MODELS_FILE` overrides the default `../models.md` relative to
   the script.
 
-- [ ] **Step 1: Write `models.md`.** Copy `~/Developer/gusdecool/agent-standards/global/models.md`, then: delete the
+- [x] **Step 1: Write `models.md`.** Copy `~/Developer/gusdecool/agent-standards/global/models.md`, then: delete the
   "Rules" section; keep the tier table, "Tier definitions" and "API model IDs" unchanged; add a "Providers" table
   with header `| Quota provider | Agent CLI | Table rows |` and rows `claude | claude | Claude`,
   `codex | codex | Codex`, `antigravity | agy | Gemini`, `opencodeGo | opencode | DeepSeek, Kimi`; rewrite
@@ -67,7 +67,7 @@ watch; GitHub Actions.
   K2.7 Code `opencode-go/kimi-k2.7-code`, K3.1-pro `opencode-go/kimi-k3.1-pro`, K3 `opencode-go/kimi-k3`. Move the
   cell notes (Mythos unverified, the `-low` / `-high` Gemini variants, the BM-56 reason, the two rules about reading
   ids from each CLI) to prose under the table.
-- [ ] **Step 2: Write failing tests** in `tests/gusdecool-model-policy.test.sh` against a fixture table written by the
+- [x] **Step 2: Write failing tests** in `tests/gusdecool-model-policy.test.sh` against a fixture table written by the
   test (not the real file), asserting:
   - `--provider claude --tier Mid` prints
     `{"provider":"claude","agent":"claude","tier":"Mid","model":"Sonnet 5.5","launchId":"claude-sonnet-5-5"}`, exit 0
@@ -81,11 +81,11 @@ watch; GitHub Actions.
   - `--tier workhorse`, `--provider gemini`, a missing flag, and `MODELS_FILE=/nonexistent` each exit 2
   - a fixture with no "Launch IDs" table exits 2
   - the real `skills/gusdecool-model-policy/models.md` resolves Mid for all four providers (exit 0, non-empty id)
-- [ ] **Step 3: Run** `bash tests/gusdecool-model-policy.test.sh`; expect failures (script missing).
-- [ ] **Step 4: Implement `resolve-model`** with awk over the three tables. Strip backticks from ids. Check the tier
+- [x] **Step 3: Run** `bash tests/gusdecool-model-policy.test.sh`; expect failures (script missing).
+- [x] **Step 4: Implement `resolve-model`** with awk over the three tables. Strip backticks from ids. Check the tier
   gate (exit 3) before reading the table.
-- [ ] **Step 5: Run** the test file and `bash tests/check-structure.sh`; expect both to pass.
-- [ ] **Step 6: Commit** "Add the tier table and resolve-model to the model policy skill".
+- [x] **Step 5: Run** the test file and `bash tests/check-structure.sh`; expect both to pass.
+- [x] **Step 6: Commit** "Add the tier table and resolve-model to the model policy skill".
 
 ### Task 2: `pick-provider --tier` in the load balancer and the board worker (judgment)
 
