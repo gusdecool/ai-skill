@@ -1,6 +1,6 @@
 ---
 name: gd-orchestrate-ticket
-description: Use when an Orca worktree session is given a Jira ticket to orchestrate, or the ticket touches other repos. Maps components to repos, starts a worker per repo in dependency order, tracks them, reports PRs. Never merges.
+description: Use when a session is given a Jira ticket URL or key (for example BM-165) to work on, in an Orca worktree, or when the ticket touches a repo other than the current one. Maps components to repos, starts a worker per repo in dependency order, tracks them, reports PRs. Never merges.
 license: MIT
 metadata:
   author: gusdecool
