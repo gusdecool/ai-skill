@@ -44,6 +44,24 @@ if grep -q 'add HITL' skills/gusdecool-board-worker/SKILL.md; then
   fail "gusdecool-board-worker SKILL.md adds the HITL label"
 fi
 
+# These skills share one policy owner so tier rules and launch instructions cannot drift.
+policy=skills/gusdecool-model-policy/SKILL.md
+balancer=skills/gusdecool-load-balancer/SKILL.md
+for required in gusdecool-model-policy --tier; do
+  grep -q -- "$required" "$balancer" || fail "$balancer: missing $required"
+done
+if grep -q 'tier table' "$balancer"; then
+  fail "$balancer: repeats tier table instructions instead of loading model policy"
+fi
+for required in resolve-model install-claude-adapter; do
+  grep -q -- "$required" "$policy" || fail "$policy: missing $required"
+done
+for skill in "$policy" "$balancer" skills/gusdecool-board-worker/SKILL.md; do
+  if grep -q 'agent-standards' "$skill"; then
+    fail "$skill: points outside the model policy for tier ownership"
+  fi
+done
+
 for json in .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-plugin/plugin.json \
   .agents/plugins/marketplace.json; do
   jq -e . "$json" >/dev/null 2>&1 || fail "$json is not valid JSON"

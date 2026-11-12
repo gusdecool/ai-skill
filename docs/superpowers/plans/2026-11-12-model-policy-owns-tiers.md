@@ -186,6 +186,8 @@ watch; GitHub Actions.
 
 ### Task 5: Skill text and README (judgment)
 
+Verification blocked: board-worker tests fail two orchestrator assertions; see the Task 5 report.
+
 **Files:**
 - Modify: `skills/gusdecool-model-policy/SKILL.md`, `skills/gusdecool-load-balancer/SKILL.md`,
   `skills/gusdecool-board-worker/SKILL.md`, `README.md`, `tests/check-structure.sh`
@@ -193,28 +195,28 @@ watch; GitHub Actions.
 **Interfaces:**
 - Consumes: the flags and outputs of Tasks 1 to 3.
 
-- [ ] **Step 1: Add failing structure checks:** the load balancer `SKILL.md` contains `gusdecool-model-policy` and
+- [x] **Step 1: Add failing structure checks:** the load balancer `SKILL.md` contains `gusdecool-model-policy` and
   `--tier`, and no longer contains `AGENTS.md` tier wording (`grep -c 'tier table'` is 0); the model policy
   `SKILL.md` contains `resolve-model` and `install-claude-adapter`; no `SKILL.md` contains `agent-standards`.
-- [ ] **Step 2: Model policy.** "Read the tier table" points to `models.md` next to the skill. Keep "Tier rules" as
+- [x] **Step 2: Model policy.** "Read the tier table" points to `models.md` next to the skill. Keep "Tier rules" as
   the only copy. Replace "Dispatching subagents" with: the neutral rule (pin the tier's model explicitly with the
   tool's own mechanism; a dispatch with no model inherits the session's model); Claude (the `sdd-*` agents or
   `model` `haiku` / `sonnet`; the hook refuses anything else; install with `scripts/install-claude-adapter`); other
   tools (their own setting, model from `resolve-model`); workers (`pick-provider --tier`, never an id typed by hand).
-- [ ] **Step 3: Load balancer.** "Before you start" step 1 becomes: load `gusdecool-model-policy`; tiers, rules and
+- [x] **Step 3: Load balancer.** "Before you start" step 1 becomes: load `gusdecool-model-policy`; tiers, rules and
   effort are there; keep the sentence about a repo `AGENTS.md` overriding tier values only with the user's yes.
   "Choosing the provider": always pass `--tier`; use the printed `model`; describe `--allow-high`. Add: when
   `chosen` is your own provider, dispatch a subagent as model-policy says; otherwise launch a worker with `--model`
   set to the printed `model`. "Dispatching": drop the bullets that restate tier rules or tell the agent to read ids
   from a table; keep the BM-56 launch-error bullet, pointing at the skill's `models.md`. Orca adapter: the two
   bullets on Codex and OpenCode slugs point to `pick-provider --tier`.
-- [ ] **Step 4: Board worker.** Line 144: the model is the `model` field of `pick-provider`.
-- [ ] **Step 5: README.** Add a `gusdecool-model-policy` section: what it owns, `resolve-model` usage, the Claude
+- [x] **Step 4: Board worker.** Line 144: the model is the `model` field of `pick-provider`.
+- [x] **Step 5: README.** Add a `gusdecool-model-policy` section: what it owns, `resolve-model` usage, the Claude
   adapter install command (`~/.agents/skills/gusdecool-model-policy/scripts/install-claude-adapter`) and what it
   changes, the weekly model watch (text from the `agent-standards` README, paths updated). Add the two new test
   files and `pnpm test` to "Development".
 - [ ] **Step 6: Run** `bash tests/check-structure.sh` and all four shell test files; expect passes.
-- [ ] **Step 7: Commit** "Point the load balancer and board worker at the model policy".
+- [x] **Step 7: Commit** "Point the load balancer and board worker at the model policy".
 
 ### Task 6: Pull request for this repo
 

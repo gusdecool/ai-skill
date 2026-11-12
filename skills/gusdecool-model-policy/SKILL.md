@@ -10,10 +10,10 @@ This overrides any skill text that says "most capable available model".
 
 ## Read the tier table
 
-Rules here speak in tiers (Low, Mid, High, Ultra). The tier table and model names live in the user's `models.md`,
-the file their global `AGENTS.md` names; read them from there, never from this skill. This skill holds no model names.
-If there is no `models.md` or tier table, ask the user which model to use per provider and stop until answered.
-Why: lineups change every few weeks, so only that file is updated, not the rules.
+Rules here speak in tiers (Low, Mid, High, Ultra). Read `models.md` next to this skill for the tier table,
+provider map and launch ids. This skill owns the tier rules; `models.md` owns the model names.
+If `models.md` or its tier table is missing, ask the user which model to use per provider and stop until answered.
+Why: lineups change every few weeks, so model names and launch ids need one source.
 
 ## Phase tiers
 
@@ -33,22 +33,29 @@ Why: lineups change every few weeks, so only that file is updated, not the rules
   changes cost and quality without the user knowing.
 - Escalate one step at a time. After a failed fix round on a Low implementer, use Mid for the next round. A Mid
   implementer that is still stuck is not escalated to High: stop and tell the user.
+  Why: a failed fix does not authorize higher cost.
 - Never use a model that is not in `models.md`, or one in a High or Ultra cell, unless the user says so in the
   conversation. If a model is unavailable (usage limits, errors), stop and tell the user instead of substituting a
-  more expensive one.
+  more expensive one. Why: availability must not silently change the approved cost.
 - When writing a plan, tag each task "mechanical" or "judgment" so the implementer tier is decided up front. If unsure
   which tier a task is, ask in the one batched question round, not mid-run.
+  Why: the implementer tier must be settled before dispatch.
 
 ## Dispatching subagents
 
-- Claude Code: dispatch the `sdd-*` agents (`~/.claude/agents/sdd-*.md`): `sdd-implementer` (Low),
-  `sdd-implementer-sonnet` (Mid), `sdd-task-reviewer` (Mid, also for the final review). Leave the `model` parameter
-  out so the model comes from the agent definition. Never dispatch `sdd-final-reviewer` (it runs a High tier model).
-- Codex and Gemini (Antigravity): use that tool's own subagent or model setting for the same role, with the model from
-  `models.md`. If the tool has no subagents, do the work inline when the session already runs the right tier.
-- Worker dispatch, `--model` slugs, worker release and stuck-worker handling for an orchestrator tool such as Orca are
-  in the `gusdecool-load-balancer` skill. Whatever dispatches a worker must pass the model from `models.md` explicitly, never
-  inherit the default.
+Pin the tier's model explicitly with the tool's own mechanism. A dispatch with no model pin inherits the session's
+model. Why: an expensive session must not silently make every subagent expensive.
+
+- Claude Code: use an `sdd-*` agent whose definition pins the required tier, or set `model` to `haiku` (Low) or
+  `sonnet` (Mid). Use `sdd-implementer` for Low, `sdd-implementer-sonnet` for Mid and `sdd-task-reviewer` for Mid
+  reviews. `sdd-final-reviewer` requires High approval under the tier rules. Install the agents and hook with
+  `scripts/install-claude-adapter`. The hook refuses an unpinned dispatch and asks for approval for other model
+  values or a fork. Why: the hook prevents silent inheritance and gates expensive dispatches.
+- Other tools: use their own subagent or model setting. Get the model from
+  `scripts/resolve-model --provider <provider> --tier <tier>`; its `launchId` is the launch value. If the tool has no
+  subagents, work inline when the session already runs the right tier. Why: each tool has its own way to pin a model.
+- Workers: follow `gusdecool-load-balancer` and run its `scripts/pick-provider --reserved <provider> --tier <tier>`.
+  Pass its printed `model` to `--model`; never type an id by hand. Why: the resolver keeps worker ids in one place.
 
 ## Reasoning effort
 

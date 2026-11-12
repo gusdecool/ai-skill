@@ -140,6 +140,52 @@ To update later, run `npx skills update` (Option A),
 `/plugin marketplace update gusdecool` (Option B)
 or `codex plugin marketplace upgrade` (Option C).
 
+## gusdecool-model-policy
+
+This skill owns the tier rules and phase tiers. Its `models.md` holds the tier table, provider map and launch ids.
+The load balancer and board worker use this policy to select models.
+
+Resolve a provider and tier to a launch id from the installed skill:
+
+```sh
+~/.agents/skills/gusdecool-model-policy/scripts/resolve-model --provider codex --tier Mid
+```
+
+The JSON contains `provider`, `agent`, `tier`, `model` (the display name) and `launchId` (the launch value).
+Exit codes are 0 for a match, 1 for no usable model, 2 for bad arguments or an unreadable table, and 3 for High or
+Ultra without `--allow-high`. Use that flag only after the user approves the higher tier under the policy.
+Why: higher cost needs explicit approval.
+
+### Claude adapter
+
+After installing or updating the skills with `npx skills update -g`, run once:
+
+```sh
+~/.agents/skills/gusdecool-model-policy/scripts/install-claude-adapter
+```
+
+It links the four `sdd-*` agents into `~/.claude/agents/` and registers a subagent model hook in
+`~/.claude/settings.json`. The hook prevents silent session model inheritance and asks for approval for other
+models or forks. The installer backs up settings and is safe to run twice; the links follow later skill updates.
+It refuses to replace an agent file it does not own unless given `--force`; `--uninstall` removes its links and hook.
+Why: existing agent definitions must survive an install unless replacement is explicit.
+
+### Weekly model watch
+
+The job runs every Monday and on demand. It reads each provider's pricing page listed in
+`tools/model-watch/models.sources.json`. It adds any model missing from
+`skills/gusdecool-model-policy/models.md` as `name (proposed)` in the tier the price guide suggests, through one PR
+on the branch `bot/model-watch`. It never merges. If a page cannot be read, it opens a "Model watch failed" issue.
+Why: proposed models need review before they can be selected for work.
+
+Local run (Node 24 or newer):
+
+```sh
+pnpm install && pnpm run model-watch
+```
+
+Tests: `pnpm test`.
+
 ## gusdecool-mysql-branch
 
 ### Why
@@ -224,10 +270,16 @@ Branches that exist only on the remote show as stale.
 
 ```
 bash tests/check-structure.sh
+bash tests/gusdecool-model-policy.test.sh
+bash tests/gusdecool-model-policy-claude.test.sh
+bash tests/gusdecool-load-balancer.test.sh
+bash tests/gusdecool-board-worker.test.sh
 bash tests/gusdecool-mysql-branch.test.sh
+pnpm test
 ```
 
-The integration tests start a throwaway `mysql:8.0` container and remove it at the end. Docker is required.
+Node 24 or newer and pnpm are required for the model watch tests.
+The MySQL integration tests start a throwaway `mysql:8.0` container and remove it at the end. Docker is required.
 CI runs the same checks plus `shellcheck`.
 
 ## License
