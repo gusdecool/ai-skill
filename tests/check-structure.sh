@@ -50,8 +50,11 @@ for json in .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-pl
 done
 
 while IFS= read -r file; do
-  # Agent prompt descriptions must stay on one line to preserve their frontmatter.
-  case "$file" in skills/*/SKILL.md|skills/*/adapters/*/agents/*.md) continue ;; esac
+  # Agent prompt descriptions stay on one line to preserve their frontmatter.
+  # Model source patterns intentionally stay readable and may exceed the line limit.
+  case "$file" in
+    skills/*/SKILL.md|skills/*/adapters/*/agents/*.md|tools/model-watch/models.sources.json) continue ;;
+  esac
   awk -v f="$file" 'length > 120 { print "FAIL: " f ":" FNR " is " length " chars"; bad = 1 }
                     END { exit bad }' "$file" || FAILS=$((FAILS + 1))
 done < <(git ls-files '*.sh' '*.md' '*.json' '*.yml')

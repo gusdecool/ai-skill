@@ -19,3 +19,18 @@ jobs:
         run: bash tests/check-structure.sh
       - name: Integration tests
         run: bash tests/gusdecool-mysql-branch.test.sh
+      - name: Model policy tests
+        run: |
+          bash tests/gusdecool-model-policy.test.sh
+          bash tests/gusdecool-model-policy-claude.test.sh
+
+  model-watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test

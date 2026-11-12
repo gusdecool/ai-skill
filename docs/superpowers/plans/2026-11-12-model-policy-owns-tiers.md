@@ -169,20 +169,20 @@ watch; GitHub Actions.
 **Interfaces:**
 - Consumes: `skills/gusdecool-model-policy/models.md` from Task 1 (tier table header unchanged).
 
-- [ ] **Step 1: Copy** the three files from `~/Developer/gusdecool/agent-standards` (`scripts/model-watch.ts`,
+- [x] **Step 1: Copy** the three files from `~/Developer/gusdecool/agent-standards` (`scripts/model-watch.ts`,
   `scripts/model-watch.test.ts`, `global/models.sources.json`). Change only paths: the models file is
   `../../skills/gusdecool-model-policy/models.md`, the sources file sits next to the script.
-- [ ] **Step 2: Add `package.json`** (name `ai-skill`, private, `"type": "module"`, `packageManager` and `engines`
+- [x] **Step 2: Add `package.json`** (name `ai-skill`, private, `"type": "module"`, `packageManager` and `engines`
   as in `agent-standards`, scripts `test`: `node --test "tools/model-watch/*.test.ts"` and `model-watch`:
   `node tools/model-watch/model-watch.ts`), run `pnpm install` to write the lockfile, add `node_modules` to
   `.gitignore`.
-- [ ] **Step 3: Run** `pnpm test`; expect every test to pass, including the round trip of the real `models.md`.
-- [ ] **Step 4: Copy the workflow,** replacing `global/models.md` with `skills/gusdecool-model-policy/models.md`
+- [x] **Step 3: Run** `pnpm test`; expect every test to pass, including the round trip of the real `models.md`.
+- [x] **Step 4: Copy the workflow,** replacing `global/models.md` with `skills/gusdecool-model-policy/models.md`
   everywhere. Add a `model-watch` job to `ci.yml` (checkout, pnpm setup, Node 24, `pnpm install --frozen-lockfile`,
   `pnpm test`) and add the two new shell test files to the `checks` job.
-- [ ] **Step 5: Exempt** `tools/model-watch/models.sources.json` from the line limit in `tests/check-structure.sh`,
+- [x] **Step 5: Exempt** `tools/model-watch/models.sources.json` from the line limit in `tests/check-structure.sh`,
   with the reason in a comment. Run it; expect a pass.
-- [ ] **Step 6: Commit** "Move the weekly model watch next to the tier table".
+- [x] **Step 6: Commit** "Move the weekly model watch next to the tier table".
 
 ### Task 5: Skill text and README (judgment)
 

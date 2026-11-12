@@ -1,0 +1,81 @@
+name: Model watch
+
+# Weekly: read provider pricing pages and propose models in the tier table through one PR.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+# contents and pull-requests: push the fixed branch and open its PR. issues: open the failure issue.
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+# One run at a time, so two runs never push the fixed branch together.
+concurrency:
+  group: model-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PROPOSAL_BRANCH: bot/model-watch
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - run: pnpm install --frozen-lockfile
+
+      # Throws when a page cannot be fetched or its pattern matches nothing, which fails the run.
+      - name: Check provider pages
+        run: pnpm run model-watch | tee "$RUNNER_TEMP/summary.txt"
+
+      # The branch name is fixed, so a second run updates the open PR instead of opening another.
+      - name: Open or update the proposal PR
+        run: |
+          if git diff --quiet -- skills/gusdecool-model-policy/models.md; then
+            echo "No changes to skills/gusdecool-model-policy/models.md"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$PROPOSAL_BRANCH"
+          git add skills/gusdecool-model-policy/models.md
+          git commit -m "Propose new models from the weekly model watch"
+          git push --force origin "$PROPOSAL_BRANCH"
+          {
+            echo "The weekly model watch found models that are not in skills/gusdecool-model-policy/models.md."
+            echo "They are added as proposed, in the tier the price guide suggests. Check each tier and name,"
+            echo "remove the proposed marker, then merge. The job never merges."
+            echo
+            cat "$RUNNER_TEMP/summary.txt"
+          } > "$RUNNER_TEMP/body.md"
+          existing="$(gh pr list --head "$PROPOSAL_BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --head "$PROPOSAL_BRANCH" --base "${{ github.event.repository.default_branch }}" \
+              --title "Propose new models from the weekly model watch" --body-file "$RUNNER_TEMP/body.md"
+          fi
+
+      - name: Open an issue when the watch failed
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          open="$(gh issue list --state open --search 'Model watch failed in:title' --json number --jq length)"
+          if [ "$open" -gt 0 ]; then
+            echo "A 'Model watch failed' issue is already open"
+            exit 0
+          fi
+          gh issue create --title "Model watch failed" \
+            --body "The weekly model watch failed. A provider page may have changed layout. Run: $RUN_URL"
