@@ -15,7 +15,7 @@ import {
   type Source,
 } from "./model-watch.ts";
 
-const MODELS_PATH: URL = new URL("../../skills/gusdecool-model-policy/models.md", import.meta.url);
+const MODELS_PATH: URL = new URL("../../skills/gd-model-policy/models.md", import.meta.url);
 
 /** Builds a minimal models.md body around the given table rows. */
 const tableWith = (rows: string[]): string =>
@@ -52,7 +52,7 @@ test("findMissing does not confuse Flash with Flash-Lite", () => {
   assert.equal(findMissing(new Set(["3.8 Flash"]), found).length, 1);
 });
 
-test("parseTable round-trips the real skills/gusdecool-model-policy/models.md and ignores the API ID table", () => {
+test("parseTable round-trips the real skills/gd-model-policy/models.md and ignores the API ID table", () => {
   const parsed: Map<string, Map<string, string[]>> = parseTable(readFileSync(MODELS_PATH, "utf8"));
   assert.deepEqual([...parsed.keys()], ["Claude", "Codex", "Gemini", "DeepSeek", "Kimi"]);
   assert.deepEqual(parsed.get("Claude")?.get("Ultra"), ["Fable 5.2", "Mythos 5.2"]);

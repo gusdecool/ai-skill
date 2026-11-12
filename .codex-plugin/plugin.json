@@ -1,7 +1,7 @@
 {
   "name": "gusdecool",
   "version": "0.1.0",
-  "description": "AI agent skills by gusdecool. First skill: mysql-branch, a MySQL database per git branch.",
+  "description": "AI agent skills by gusdecool. Install with: npx skills add gusdecool/ai-skill",
   "author": { "name": "Budi Arsana", "url": "https://github.com/gusdecool" },
   "homepage": "https://github.com/gusdecool/ai-skill",
   "repository": "https://github.com/gusdecool/ai-skill",
@@ -9,7 +9,7 @@
   "keywords": ["mysql", "git", "branching", "docker", "skills"],
   "interface": {
     "displayName": "gusdecool skills",
-    "shortDescription": "A MySQL database per git branch or worktree",
+    "shortDescription": "A MySQL database per git branch or worktree. Use npx skills add gusdecool/ai-skill",
     "developerName": "Budi Arsana",
     "category": "Developer Tools",
     "defaultPrompt": ["Use MySQL branch to give this git branch its own database."]

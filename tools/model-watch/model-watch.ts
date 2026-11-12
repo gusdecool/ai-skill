@@ -220,7 +220,7 @@ export const run = async (
 const main = async (): Promise<void> => {
   const today: string = new Date().toISOString().slice(0, 10);
   const summary: string[] = await run(
-    new URL("../../skills/gusdecool-model-policy/models.md", import.meta.url).pathname,
+    new URL("../../skills/gd-model-policy/models.md", import.meta.url).pathname,
     new URL("models.sources.json", import.meta.url).pathname,
     fetch,
     today,

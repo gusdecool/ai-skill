@@ -4,7 +4,7 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TICKET="$REPO/skills/gusdecool-board-worker/scripts/board-ticket-cli"
+TICKET="$REPO/skills/gd-board-worker/scripts/board-ticket-cli"
 export BOARD_WORKER_CONFIG="$REPO/tests/fixtures/board/config"
 export STUB_DIR
 STUB_DIR="$(mktemp -d)"

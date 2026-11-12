@@ -1,7 +1,7 @@
 {
   "name": "gusdecool",
   "version": "0.1.0",
-  "description": "AI agent skills by gusdecool. First skill: mysql-branch, a MySQL database per git branch.",
+  "description": "AI agent skills by gusdecool. Install with: npx skills add gusdecool/ai-skill",
   "author": { "name": "Budi Arsana", "url": "https://github.com/gusdecool" },
   "homepage": "https://github.com/gusdecool/ai-skill",
   "repository": "https://github.com/gusdecool/ai-skill",

@@ -5,7 +5,7 @@
     {
       "name": "gusdecool",
       "source": "./",
-      "description": "AI agent skills by gusdecool. First skill: mysql-branch, a MySQL database per git branch."
+      "description": "AI agent skills by gusdecool. Install with: npx skills add gusdecool/ai-skill"
     }
   ]
 }

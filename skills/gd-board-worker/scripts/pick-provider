@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Picks a worker using the shared quota scorer and model-policy tier resolver (default Mid).
+# Usage: pick-provider [--tier Low|Mid|High|Ultra] [--orchestrator]
+# Orchestrator mode checks only claude at its pause cutoff and returns its Mid model.
+# Prints {provider,model,tier}, or {error,earliestResetsAt} for quota exhaustion. Exits 0 selected, 1 unavailable,
+# 2 invalid arguments, unreadable quotas or tables, or a tier requiring the user's OK.
+# Env: MODELS_FILE (default: the model-policy skill's models.md), RESOLVE_MODEL, LB_PICK_PROVIDER,
+# ORCA_BIN, ORCA_FALLBACK_BIN and NOW_MS are passed to the shared scripts.
+set -euo pipefail
+
+# Prints an argument error and exits 2.
+die() { echo "pick-provider: $*" >&2; exit 2; }
+
+# Parse the worker tier and the optional orchestrator quota check.
+orchestrator=false
+tier=Mid
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --orchestrator) orchestrator=true ;;
+    --tier) [ $# -ge 2 ] && [ -n "$2" ] || die "--tier needs a value"; shift; tier="$1" ;;
+    *) die "unknown argument '$1'" ;;
+  esac
+  shift
+done
+case "$tier" in
+  Low | Mid | High | Ultra) ;;
+  *) die "unknown tier '$tier' (use Low, Mid, High or Ultra)" ;;
+esac
+
+# Delegate model availability and quota selection to the shared scorer.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export MODELS_FILE="${MODELS_FILE:-$script_dir/../../gd-model-policy/models.md}"
+lb_script="${LB_PICK_PROVIDER:-$script_dir/../../gd-load-balancer/scripts/pick-provider}"
+lb_args=(--reserved claude --tier "$tier")
+if [ "$orchestrator" = true ]; then lb_args+=(--orchestrator); fi
+code=0
+scored="$(bash "$lb_script" "${lb_args[@]}")" || code=$?
+case "$code" in
+  0 | 1) ;;
+  *) exit 2 ;;
+esac
+
+# Preserve the board worker's error shapes, distinguishing absent models from unavailable quota.
+provider="$(jq -r '.chosen // empty' <<<"$scored")"
+if [ -z "$provider" ]; then
+  if [ "$orchestrator" = false ] && jq -e --arg t "$tier" \
+    '[.providers[] | select(.windows | length > 0)]
+     | length > 0 and all(.reason == ("no " + $t + " model"))' <<<"$scored" >/dev/null; then
+    jq -nc --arg t "$tier" '{error: ("no provider has a " + $t + " model")}'
+    exit 1
+  fi
+  jq -c '{error: "all providers over cutoff", earliestResetsAt}' <<<"$scored"
+  exit 1
+fi
+
+# Resolve the orchestrator's Mid model separately because its quota check ignores worker tiers.
+if [ "$orchestrator" = true ]; then
+  tier=Mid
+  resolver="${RESOLVE_MODEL:-$script_dir/../../gd-model-policy/scripts/resolve-model}"
+  resolved="$(bash "$resolver" --provider "$provider" --tier "$tier")" || exit 2
+  model="$(jq -r .launchId <<<"$resolved")"
+else
+  model="$(jq -r .model <<<"$scored")"
+fi
+
+# Keep the board worker's public provider spelling and compact JSON shape.
+jq -nc --arg p "${provider/opencodeGo/opencode}" --arg m "$model" --arg t "$tier" \
+  '{provider: $p, model: $m, tier: $t}'

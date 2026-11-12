@@ -1,13 +1,17 @@
 ---
 name: gd-orchestrate-ticket
 description: Use when an Orca worktree session is given a Jira ticket to orchestrate, or the ticket touches other repos. Maps components to repos, starts a worker per repo in dependency order, tracks them, reports PRs. Never merges.
+license: MIT
+metadata:
+  author: gusdecool
+  version: "1.0"
 ---
 
 # Orchestrate a ticket across repos
 
 This session is the orchestrator. It plans and tracks; the workers change code in their own repos. Needs the `orca`
-CLI (load `orca-cli` and `orchestration` for command details), `board-ticket-cli` from `gusdecool-board-worker`, and
-`jq`. Choose models per `gusdecool-model-policy`; name no model here.
+CLI (load `orca-cli` and `orchestration` for command details), `board-ticket-cli` from `gd-board-worker`, and
+`jq`. Choose models per `gd-model-policy`; name no model here.
 
 ## Steps
 

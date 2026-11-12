@@ -42,18 +42,18 @@ jobs:
       # The branch name is fixed, so a second run updates the open PR instead of opening another.
       - name: Open or update the proposal PR
         run: |
-          if git diff --quiet -- skills/gusdecool-model-policy/models.md; then
-            echo "No changes to skills/gusdecool-model-policy/models.md"
+          if git diff --quiet -- skills/gd-model-policy/models.md; then
+            echo "No changes to skills/gd-model-policy/models.md"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -C "$PROPOSAL_BRANCH"
-          git add skills/gusdecool-model-policy/models.md
+          git add skills/gd-model-policy/models.md
           git commit -m "Propose new models from the weekly model watch"
           git push --force origin "$PROPOSAL_BRANCH"
           {
-            echo "The weekly model watch found models that are not in skills/gusdecool-model-policy/models.md."
+            echo "The weekly model watch found models that are not in skills/gd-model-policy/models.md."
             echo "They are added as proposed, in the tier the price guide suggests. Check each tier and name,"
             echo "remove the proposed marker, then merge. The job never merges."
             echo "After removing (proposed), add a Launch IDs row; resolve-model skips models with no launch id."
