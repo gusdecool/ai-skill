@@ -22,6 +22,12 @@ for script in skills/*/scripts/*; do
   [ -x "$script" ] || fail "$script is not executable"
 done
 
+# Adapter hooks are invoked directly, so they must be executable too.
+for hook in skills/*/adapters/*/hooks/*; do
+  [ -e "$hook" ] || continue
+  [ -x "$hook" ] || fail "$hook is not executable"
+done
+
 # An unquoted ": " in a frontmatter description is invalid YAML and makes `npx skills add` skip the skill.
 for skill in skills/*/SKILL.md; do
   desc="$(sed -n 's/^description:[[:space:]]*//p' "$skill" | head -n1)"
@@ -44,7 +50,8 @@ for json in .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-pl
 done
 
 while IFS= read -r file; do
-  case "$file" in skills/*/SKILL.md) continue ;; esac
+  # Agent prompt descriptions must stay on one line to preserve their frontmatter.
+  case "$file" in skills/*/SKILL.md|skills/*/adapters/*/agents/*.md) continue ;; esac
   awk -v f="$file" 'length > 120 { print "FAIL: " f ":" FNR " is " length " chars"; bad = 1 }
                     END { exit bad }' "$file" || FAILS=$((FAILS + 1))
 done < <(git ls-files '*.sh' '*.md' '*.json' '*.yml')

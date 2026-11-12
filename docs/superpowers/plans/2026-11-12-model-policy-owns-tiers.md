@@ -140,24 +140,24 @@ watch; GitHub Actions.
   "permissionDecisionReason":"..."}}`. Env `CLAUDE_AGENTS_DIR` overrides `~/.claude/agents` (tests).
 - Produces: `install-claude-adapter [--uninstall] [--force]`; env `CLAUDE_HOME` overrides `~/.claude` (tests).
 
-- [ ] **Step 1: Write failing hook tests,** one per row of the spec's table plus: tool `Bash` is allowed untouched;
+- [x] **Step 1: Write failing hook tests,** one per row of the spec's table plus: tool `Bash` is allowed untouched;
   tool `Task` is treated like `Agent`; `subagent_type` missing with no model is denied; `sdd-implementer` with no
   model is allowed (definition pins `haiku`); `sdd-final-reviewer` asks; `model: opus` on `sdd-implementer` asks;
   `subagent_type: fork` asks even with `model: sonnet`; a project `.claude/agents/x.md` pinning `sonnet` under `cwd`
   is allowed; malformed stdin is denied. The deny reason contains `gusdecool-model-policy`.
-- [ ] **Step 2: Write failing installer tests** against a temp `CLAUDE_HOME`: install creates four symlinks and one
+- [x] **Step 2: Write failing installer tests** against a temp `CLAUDE_HOME`: install creates four symlinks and one
   `PreToolUse` entry with matcher `Agent|Task` whose command is the guard's absolute path; an existing `PreToolUse`
   entry with matcher `*` survives; a second run adds nothing; a regular file at `agents/sdd-implementer.md` makes it
   exit 1 without `--force` and is replaced (after a `.bak` copy) with it; a missing `settings.json` is created;
   `settings.json.bak` holds the previous content; `--uninstall` removes only its own links and entry.
-- [ ] **Step 3: Write the consistency test:** each `adapters/claude/agents/*.md` `model:` alias matches the Claude
+- [x] **Step 3: Write the consistency test:** each `adapters/claude/agents/*.md` `model:` alias matches the Claude
   row of the real `models.md` (`haiku` in Low, `sonnet` in Mid, `opus` in High), compared case-insensitively on the
   first word of the model name.
-- [ ] **Step 4: Run** `bash tests/gusdecool-model-policy-claude.test.sh`; expect failures.
-- [ ] **Step 5: Implement the hook and the installer** (jq for all JSON). The hook reads the pinned model from the
+- [x] **Step 4: Run** `bash tests/gusdecool-model-policy-claude.test.sh`; expect failures.
+- [x] **Step 5: Implement the hook and the installer** (jq for all JSON). The hook reads the pinned model from the
   `model:` frontmatter line. `inherit` or an unknown alias counts as "anything else" (ask).
-- [ ] **Step 6: Run** the test file and `bash tests/check-structure.sh`; expect both to pass.
-- [ ] **Step 7: Commit** "Add the Claude adapter for the model policy".
+- [x] **Step 6: Run** the test file and `bash tests/check-structure.sh`; expect both to pass.
+- [x] **Step 7: Commit** "Add the Claude adapter for the model policy".
 
 ### Task 4: Move the weekly model watch into this repo (mechanical)
 
