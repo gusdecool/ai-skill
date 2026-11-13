@@ -67,6 +67,17 @@ Why: the user decides how much of each quota to spend, for example keeping half 
 ## Choosing the provider for a task
 
 Pick per task, at dispatch time, at the tier the task needs under `gd-model-policy`.
+
+**Classify the task first, then pick the tier.** Every task is one of two kinds:
+
+- *Mechanical* (easy: the plan gives the code, wiring, docs, small components, renames): tier Low.
+- *Judgment* (hard: DB, concurrency, multi-file integration, environment-heavy, unclear approach): tier Mid.
+
+Use the tag the plan gave the task. If the plan has no tag, classify it yourself from the two lists and write one line
+saying why. Never default an untagged task to Mid. Never use a Mid model for a mechanical task because it is
+"probably fine". Why: Mid models such as Codex Sol cost several times a Low model per task, and a quota burns fast
+when easy tasks are sent to Mid. Escalation from Low to Mid happens only after a failed fix round, as `gd-model-policy`
+says.
 If the user pinned a provider for the task, use it and do not balance.
 
 **Run `scripts/pick-provider --reserved <your provider> --tier <tier>` (path: next to this SKILL.md).
@@ -88,8 +99,9 @@ Orca, point `ORCA_BIN` at a command that prints the same JSON for `account list 
 When `chosen` is your own provider, dispatch a subagent as `gd-model-policy` says. Otherwise launch a
 worker with `--model` set to the printed `model`. Why: both paths must pin the selected tier's model.
 
-**Paste the script's `table` into the dispatch comment or the plan ledger for every dispatch.** Why: a reviewer can
-then see that the formula ran. A dispatch with no table is treated as not balanced.
+**Paste the script's `table` into the dispatch comment or the plan ledger for every dispatch, with the task kind, the
+tier and the one-line reason** (for example `mechanical, Low: plan gives the code`). Why: a reviewer can then see that
+the formula ran and that the tier was chosen on purpose. A dispatch with no table or no kind is treated as not balanced.
 
 What the script does (the rules, kept here so you can read its output):
 
@@ -204,7 +216,9 @@ first.
   `ok` is unavailable; `opencodeGo` reports `missing-credentials` until its API key is set in Orca settings.
 - **Launch:** `orca agent launch --agent <claude|codex|opencode> --worktree <selector> --prompt <text>`. Gemini runs
   through the Antigravity CLI (`agy`). For orchestrated workers use `orca orchestration worker-start` with `--model` set
-  explicitly and `--worktree current`.
+  explicitly and `--worktree current`. For Claude and Codex workers also pass `--effort medium` (the flag is in
+  `worker-start --help`; OpenCode ignores it). Why: `gd-model-policy` sets effort to medium, and a launch without the
+  flag uses the worker's own default, which can be higher and burns quota.
 - **Codex model slugs:** use the `model` printed by `scripts/pick-provider --tier <tier>` for `--model`.
   Why: the resolver owns launch ids, so a cache lookup cannot silently replace the selected model.
 - **OpenCode Go models:** use `--agent opencode` and the `model` printed by `scripts/pick-provider --tier <tier>`.
