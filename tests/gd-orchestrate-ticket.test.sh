@@ -65,6 +65,7 @@ assert_eq "no arguments exits 2" 2 "$CODE"
 # ticket-gate: board scripts are replaced by stubs that print $STUB_DIR/ready and $STUB_DIR/ticket.
 GATE="$REPO/skills/gd-orchestrate-ticket/scripts/ticket-gate"
 mkdir -p "$STUB_DIR/board"
+# shellcheck disable=SC2016 # the stub body must keep its $(...) unexpanded
 printf '#!/usr/bin/env bash\ncat "%s/ready"\n[ "$(jq .ready "%s/ready")" = true ]\n' "$STUB_DIR" "$STUB_DIR" \
   >"$STUB_DIR/board/board-check-ready"
 printf '#!/usr/bin/env bash\ncat "%s/ticket"\n' "$STUB_DIR" >"$STUB_DIR/board/board-ticket-cli"
