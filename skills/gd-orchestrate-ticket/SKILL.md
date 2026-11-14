@@ -15,15 +15,23 @@ CLI (load `orca-cli` and `orchestration` for command details), `board-ticket-cli
 
 ## Steps
 
-1. **Read the ticket.** `board-ticket-cli view <KEY>` gives `components`, `description`, `summary`. With no
-   components, ask the owner which repos are touched.
-2. **Map components to repos.** `scripts/ticket-repos <component>...` (next to this file) prints
-   `{component, repoId, path}` per component; exit 3 means some are `null` (no match or two repos share the name).
-   Overrides live in `~/.config/orchestrate-ticket/repos` as `component=repo-display-name` lines.
-3. **Confirm once.** Show the repo list and the dependency order you propose (for example API before client). Ask the
-   owner one question: confirm, add or remove repos, or name the repo for an unmatched component. Options, your
-   recommendation first, tradeoff per option. State the time estimate for the whole ticket in the same message
-   (it is a guess until the repos are read; say so). After the answer, do not ask again.
+1. **Run the gate.** `scripts/ticket-gate <KEY>` (next to this file) reads the ticket and prints
+   `{ask, missing, repos}`. It runs `board-check-ready` (goal, acceptance criteria, no open questions, one component)
+   and `ticket-repos` (every component maps to exactly one repo; overrides live in
+   `~/.config/orchestrate-ticket/repos` as `component=repo-display-name` lines). Exit 0 means `ask` is false.
+   `board-ticket-cli view <KEY>` gives the full text for the briefs. Why: a ticket made with `gd-board-issue` is built
+   so nobody is asked anything; a session once asked a confirmation on such a ticket because this step asked every
+   time.
+2. **Decide from the gate, never from habit.**
+   - `ask` is false: do not ask the owner anything. Put the repos, the dependency order (from the ticket's "Depends on"
+     line, else the order of the components) and the time estimate in one short chat message, and go to step 4 in the
+     same turn. The ticket is the owner's decision.
+   - `ask` is true: ask the owner once, as one question per gap named in `missing`. Options, your recommendation first,
+     tradeoff per option (for "Repo mapping": name the repo for the unmatched component; for a missing section or open
+     question: answer it or stop). State the time estimate in the same message (a guess until the repos are read; say
+     so). After the answer, do not ask again.
+3. **Never add a question the gate did not ask for**, such as "start the worker?", "add another repo?" or "wait for the
+   other ticket?". Why: each one makes the owner answer something the ticket already decided.
 4. **Write the plan.** `tickets/<KEY>/plan.md` in this repo: repos, one self-contained brief per repo, dependencies,
    and a status table (repo, worker, PR URL, state). Commit it on this worktree's task branch. Why: a new session
    resumes from the file, not from chat.

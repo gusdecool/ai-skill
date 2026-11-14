@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Decides whether the orchestrator may start a ticket's workers without asking the owner.
+#   ticket-gate <KEY>
+# Runs board-check-ready (goal, acceptance criteria, no open questions, one component) and ticket-repos (every
+# component maps to exactly one repo). Prints {"ask":bool,"missing":[...],"repos":[...]}. Exit 0 when the ticket is
+# ready and every component maps (start without asking), 1 when the owner must be asked, 2 on usage or read errors.
+# BOARD_SCRIPTS overrides the folder of the gd-board-worker scripts (used by the tests).
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BOARD="${BOARD_SCRIPTS:-$HERE/../../gd-board-worker/scripts}"
+
+# Prints the gate result as JSON from the readiness output ($1), the repo array ($2) and the unmatched count ($3).
+report() {
+  jq -n -c --argjson ready "$1" --argjson repos "$2" --argjson unmatched "$3" '
+    (($ready.missing // []) + (if $unmatched > 0 then ["Repo mapping"] else [] end)) as $missing
+    | {ask: ($missing | length > 0), missing: $missing, repos: $repos}'
+}
+
+# Reads the ticket, runs both checks and exits with the gate verdict.
+main() {
+  [ "$#" -eq 1 ] || { echo "usage: ticket-gate <KEY>" >&2; return 2; }
+  local ready code components repos unmatched result
+  ready="$("$BOARD/board-check-ready" "$1")"
+  code=$?
+  # board-check-ready exits 1 when not ready (still prints JSON) and 2 when the ticket cannot be read.
+  [ "$code" -le 1 ] || { echo "ticket-gate: cannot read $1" >&2; return 2; }
+  components="$("$BOARD/board-ticket-cli" view "$1" | jq -r '.components[]?')" || return 2
+  repos='[]'
+  if [ -n "$components" ]; then
+    # shellcheck disable=SC2086 # one argument per component line is intended
+    repos="$(cd "$HERE" && IFS=$'\n' && ./ticket-repos $components)" || [ "$?" -eq 3 ] || return 2
+  fi
+  unmatched="$(jq 'map(select(.repoId == null)) | length' <<<"$repos")"
+  result="$(report "$ready" "$repos" "$unmatched")" || return 2
+  printf '%s\n' "$result"
+  [ "$(jq '.ask' <<<"$result")" = false ]
+}
+
+main "$@"
