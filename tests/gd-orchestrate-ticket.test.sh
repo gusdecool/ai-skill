@@ -62,4 +62,37 @@ assert_eq "override maps component to repo" "id-1" "$(jq -r '.[0].repoId' <<<"$O
 run
 assert_eq "no arguments exits 2" 2 "$CODE"
 
+# ticket-gate: board scripts are replaced by stubs that print $STUB_DIR/ready and $STUB_DIR/ticket.
+GATE="$REPO/skills/gd-orchestrate-ticket/scripts/ticket-gate"
+mkdir -p "$STUB_DIR/board"
+printf '#!/usr/bin/env bash\ncat "%s/ready"\n[ "$(jq .ready "%s/ready")" = true ]\n' "$STUB_DIR" "$STUB_DIR" \
+  >"$STUB_DIR/board/board-check-ready"
+printf '#!/usr/bin/env bash\ncat "%s/ticket"\n' "$STUB_DIR" >"$STUB_DIR/board/board-ticket-cli"
+chmod +x "$STUB_DIR/board/"*
+
+# Runs ticket-gate; stdout goes to OUT, the exit code to CODE.
+# shellcheck disable=SC2034 # OUT and CODE are read by the assertions
+gate() {
+  OUT="$(BOARD_SCRIPTS="$STUB_DIR/board" bash "$GATE" BM-1 2>/dev/null)"
+  CODE=$?
+}
+
+set_repos api
+echo '{"ready":true,"missing":[]}' >"$STUB_DIR/ready"
+echo '{"components":["api"]}' >"$STUB_DIR/ticket"
+gate
+assert_eq "gate: ready and mapped exits 0" 0 "$CODE"
+assert_eq "gate: ready and mapped does not ask" false "$(jq .ask <<<"$OUT")"
+
+echo '{"ready":false,"missing":["Open questions"]}' >"$STUB_DIR/ready"
+gate
+assert_eq "gate: open questions exits 1" 1 "$CODE"
+assert_eq "gate: open questions are listed" "Open questions" "$(jq -r '.missing[0]' <<<"$OUT")"
+
+echo '{"ready":true,"missing":[]}' >"$STUB_DIR/ready"
+echo '{"components":["ghost"]}' >"$STUB_DIR/ticket"
+gate
+assert_eq "gate: unmatched component exits 1" 1 "$CODE"
+assert_eq "gate: unmatched component is listed" "Repo mapping" "$(jq -r '.missing[0]' <<<"$OUT")"
+
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; else echo "$FAILS failed"; exit 1; fi
