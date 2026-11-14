@@ -42,5 +42,7 @@ Why: agents read the local install, so a merged change has no effect until it is
 
 - [ ] The edit was made in the source repository on a branch, not in an install folder.
 - [ ] A pull request is open, with the reason for the change in its description.
-- [ ] The repository's own checks pass.
+- [ ] The repository's own checks pass on the PR: loaded `gd-git-workflow`, ran `gh pr checks <n> --watch` until none
+      is pending or failing, and `gh pr view <n> --json mergeable,mergeStateStatus` is `MERGEABLE` and `CLEAN`. Why: a
+      skill PR was reported done while a Shellcheck check was failing, because this line did not say how to check.
 - [ ] After the merge, the global install was updated and the local copy was refreshed in the same session.

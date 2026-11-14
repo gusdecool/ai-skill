@@ -53,7 +53,11 @@ CLI (load `orca-cli` and `orchestration` for command details), `board-ticket-cli
    the owner. Start repos whose upstream worker reported `worker_done`, telling them the upstream branch or PR to
    build on. Steer a stopped worker with `orca orchestration send --to dispatch:<id>`. End your turn again.
 7. **Finish.** When every worker has settled, comment on the ticket with `board-ticket-cli comment <KEY> "<text>"` and
-   report each repo's PR as a full URL with outcome and open blockers. Do not merge anything.
+   report each repo's PR as a full URL with outcome and open blockers. Do not merge anything. Before you report a PR
+   as done, load `gd-git-workflow` and check it: `gh pr checks <n> --repo <repo>` all pass and
+   `gh pr view <n> --repo <repo> --json mergeable,mergeStateStatus` is `MERGEABLE` and `CLEAN`. A failing or pending
+   check, or a conflict, is a blocker, not "done". Why: a session reported a PR with a failing CI check as done
+   because this step only said to list the PRs.
 
 Never poll, loop on `orca orchestration check`, or run watch scripts: waiting is free only while the turn is ended.
 Why: a session that stays alive spends tokens; Orca wakes an ended one.
