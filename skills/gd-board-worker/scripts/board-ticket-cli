@@ -173,13 +173,15 @@ cmd_blockers() {
 }
 
 # Makes the first ticket wait for the second (Jira "Blocks" link). Args: key, blocker key. Does nothing when linked.
+# Jira reads the payload from the blocked ticket's side: the blocker is the inward issue ("is blocked by"), the
+# blocked ticket is the outward issue. This is also the side cmd_blockers reads.
 cmd_link() {
   local key="$1" blocker="$2" existing
   [ "$key" != "$blocker" ] || die "a ticket cannot block itself: $key"
   existing="$(cmd_blockers "$key")" || exit 2
   if jq -e --arg b "$blocker" 'any(.[]; .key == $b)' <<<"$existing" >/dev/null; then return 0; fi
   jira_api POST /rest/api/2/issueLink "$(jq -n --arg k "$key" --arg b "$blocker" \
-    '{type: {name: "Blocks"}, outwardIssue: {key: $b}, inwardIssue: {key: $k}}')" >/dev/null || exit 2
+    '{type: {name: "Blocks"}, inwardIssue: {key: $b}, outwardIssue: {key: $k}}')" >/dev/null || exit 2
 }
 
 # Prints the agent.runs property of the ticket as a JSON array; [] when the ticket has none. Returns 1 with one

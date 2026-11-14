@@ -239,11 +239,16 @@ assert_eq "blockers without a key exits 2" "2" "$CODE"
 reset_curl '200|{"fields":{"issuelinks":[]}}' '201|'
 run link BM-5 blocked-by BM-2
 assert_eq "link exits 0" "0" "$CODE"
-assert_eq "link posts a Blocks link: the blocker is the outward issue" \
-  '{"type":{"name":"Blocks"},"outwardIssue":{"key":"BM-2"},"inwardIssue":{"key":"BM-5"}}' \
+assert_eq "link posts a Blocks link: the blocker is the inward issue, the blocked ticket the outward issue" \
+  '{"type":{"name":"Blocks"},"inwardIssue":{"key":"BM-2"},"outwardIssue":{"key":"BM-5"}}' \
   "$(jq -c . "$STUB_DIR/curl-body")"
+POSTED_BLOCKER="$(jq -c '.inwardIssue + {fields: {status: {name: "Todo"}}}' "$STUB_DIR/curl-body")"
 assert_eq "link posts to the issueLink endpoint" "1" \
   "$(grep -c '^POST https://x.atlassian.net/rest/api/2/issueLink ' "$STUB_DIR/curl-calls")"
+reset_curl "200|{\"fields\":{\"issuelinks\":[{\"type\":{\"name\":\"Blocks\"},\"inwardIssue\":$POSTED_BLOCKER}]}}"
+run blockers BM-5
+assert_eq "blockers lists the blocker that link posted (the inward side)" "BM-2" \
+  "$(jq -r '.[0].key' <<<"$OUT")"
 reset_curl "200|$LINKS"
 run link BM-5 blocked-by BM-2
 assert_eq "link does nothing when the link already exists" "0 1" "$CODE $(ncalls)"
