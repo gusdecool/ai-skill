@@ -68,6 +68,7 @@ mkdir -p "$STUB_DIR/board"
 # shellcheck disable=SC2016 # the stub body must keep its $(...) unexpanded
 printf '#!/usr/bin/env bash\ncat "%s/ready"\n[ "$(jq .ready "%s/ready")" = true ]\n' "$STUB_DIR" "$STUB_DIR" \
   >"$STUB_DIR/board/board-check-ready"
+# shellcheck disable=SC2016 # the stub body must keep its $1 unexpanded
 printf '#!/usr/bin/env bash\nif [ "$1" = blockers ]; then cat "%s/blockers"; else cat "%s/ticket"; fi\n' \
   "$STUB_DIR" "$STUB_DIR" >"$STUB_DIR/board/board-ticket-cli"
 echo '[]' >"$STUB_DIR/blockers"
