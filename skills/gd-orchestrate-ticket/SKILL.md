@@ -39,9 +39,11 @@ CLI (load `orca-cli` and `orchestration` for command details), `board-ticket-cli
    the ticket already decided. Why blockers are asked: BM-206 (Hermes on node 2) was built and merged while its blocker
    BM-204 (create node 2) was still in Backlog, so the first apply created nothing to run on and the owner found the
    missing EC2 instance first.
-4. **Write the plan.** `tickets/<KEY>/plan.md` in this repo: repos, one self-contained brief per repo, dependencies,
-   and a status table (repo, worker, PR URL, state). Commit it on this worktree's task branch. Why: a new session
-   resumes from the file, not from chat.
+4. **Write the plan.** `~/.config/orchestrate-ticket/plans/<KEY>/plan.md`, outside every repo: repos, one
+   self-contained brief per repo (`brief-<repo>.md` next to it), dependencies, and a status table (repo, worker, PR URL,
+   state). Never write it into, or commit it to, the repo of this worktree or any worker repo. Why: the owner wants
+   repos clean; BM-165, BM-204, BM-206 and BM-205 each committed a `tickets/<KEY>/` folder into the notes repo and the
+   owner objected. A new session resumes from the file, not from chat.
 5. **Start the workers with no open dependency.** First load `gd-model-policy` and `gd-load-balancer`. Why: an
    orchestrator that skipped them picked a Claude worker by hand and ignored the quota formula. For each worker:
    - Run `gd-load-balancer/scripts/pick-provider --reserved <your provider> --tier <tier>`. Never choose the provider,
