@@ -56,7 +56,7 @@ cat >"$STUB_DIR/models.md" <<'TABLE'
 |---|---|---|
 | claude | claude | Claude |
 | codex | codex | Codex |
-| antigravity | agy | Gemini |
+| antigravity | antigravity | Gemini |
 | opencodeGo | opencode | DeepSeek, Kimi |
 
 ## Launch IDs
