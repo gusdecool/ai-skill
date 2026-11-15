@@ -30,13 +30,12 @@ chmod +x "$STUB_DIR/orca"
 win() { echo "{\"usedPercent\":$1,\"windowMinutes\":$2,\"resetsAt\":$((NOW + $3 * MIN))}"; }
 
 # The BM-55 case: claude weekly 79 (reserved), codex 62 / 58, opencodeGo 0 / 0 / 0, antigravity weekly 6.
-# Codex scores about 126 / 210 and OpenCode Go about 294, so choosing by hand "the first one under its cutoff" picks
-# codex, which is wrong.
+# Scores use the weekly window only: codex about 207, antigravity about 158, OpenCode Go about 105.
 cat >"$STUB_DIR/bm55.json" <<JSON
 {"result":{"rateLimits":{
   "claude":{"status":"ok","session":$(win 20 300 120),"weekly":$(win 79 10080 6000)},
   "codex":{"status":"ok","session":$(win 62 300 90),"weekly":$(win 58 10080 2040)},
-  "antigravity":{"status":"ok","session":null,"weekly":$(win 6 10080 6000)},
+  "antigravity":{"status":"ok","session":$(win 0 300 100),"weekly":$(win 6 10080 6000)},
   "opencodeGo":{"status":"ok","session":$(win 0 300 240),"weekly":$(win 0 10080 9600),"monthly":$(win 0 43200 14700)}}}}
 JSON
 
@@ -90,18 +89,21 @@ run() {
 }
 
 run "$STUB_DIR/bm55.json" --reserved claude
-assert_eq "BM-55 chooses opencodeGo" "opencodeGo" "$(jq -r .chosen <<<"$OUT")"
+assert_eq "BM-55 chooses codex by weekly urgency" "codex" "$(jq -r .chosen <<<"$OUT")"
 assert_eq "BM-55 exits 0" "0" "$CODE"
-assert_eq "claude weekly 79 is skipped as reserved" "weekly 79 >= 75 (reserved)" \
+assert_eq "claude weekly 79 is skipped as reserved" "weekly 79 >= 50 (reserved)" \
   "$(jq -r '.providers[] | select(.provider == "claude") | .reason' <<<"$OUT")"
-assert_eq "codex is eligible but scores below opencodeGo" "true" \
-  "$(jq '([.providers[] | select(.provider == "codex")][0].score)
-    < ([.providers[] | select(.provider == "opencodeGo")][0].score)' <<<"$OUT")"
+assert_eq "opencodeGo is eligible but scores below codex" "true" \
+  "$(jq '([.providers[] | select(.provider == "opencodeGo")][0].score)
+    < ([.providers[] | select(.provider == "codex")][0].score)' <<<"$OUT")"
+assert_eq "the score is the weekly urgency, not the higher session urgency" "true" \
+  "$(jq '[.providers[] | select(.provider == "antigravity")][0] | .score == .windows[1].urgency
+    and .windows[0].urgency > .windows[1].urgency' <<<"$OUT")"
 assert_eq "the table has a row per provider" "6" "$(jq -r .table <<<"$OUT" | wc -l | tr -d ' ')"
 assert_eq "the table marks the chosen row" "1" "$(jq -r .table <<<"$OUT" | grep -c '| chosen |')"
 
 run "$STUB_DIR/bm55.json" --reserved none
-assert_eq "without a reserved provider claude weekly 79 is under 95" "false" \
+assert_eq "without a reserved provider claude weekly 79 is under 90" "false" \
   "$(jq '[.providers[] | select(.provider == "claude")][0].skipped' <<<"$OUT")"
 
 # Parallel tasks: each --bump adds 5 session points to that provider.
@@ -109,9 +111,18 @@ run "$STUB_DIR/bm55.json" --reserved claude --bump opencodeGo --bump opencodeGo
 assert_eq "two bumps move opencodeGo session to 10" "10" \
   "$(jq '[.providers[] | select(.provider == "opencodeGo")][0].windows[0].usedPercent' <<<"$OUT")"
 
-run "$STUB_DIR/bm55.json" --reserved claude --exclude opencodeGo
-assert_eq "an excluded provider is skipped, the next best wins" "codex excluded" \
-  "$(jq -r '.chosen' <<<"$OUT") $(jq -r '[.providers[] | select(.provider == "opencodeGo")][0].reason' <<<"$OUT")"
+assert_eq "two bumps move opencodeGo weekly to 10" "10" \
+  "$(jq '[.providers[] | select(.provider == "opencodeGo")][0].windows[1].usedPercent' <<<"$OUT")"
+
+run "$STUB_DIR/bm55.json" --reserved claude --exclude codex
+assert_eq "an excluded provider is skipped, the next best wins" "antigravity excluded" \
+  "$(jq -r '.chosen' <<<"$OUT") $(jq -r '[.providers[] | select(.provider == "codex")][0].reason' <<<"$OUT")"
+
+# A worker whose session is at 90 is not eligible, even with the best weekly score.
+jq '.result.rateLimits.codex.session.usedPercent = 90' "$STUB_DIR/bm55.json" >"$STUB_DIR/session90.json"
+run "$STUB_DIR/session90.json" --reserved claude
+assert_eq "worker session 90 is skipped, antigravity wins" "antigravity session 90 >= 90" \
+  "$(jq -r '.chosen' <<<"$OUT") $(jq -r '[.providers[] | select(.provider == "codex")][0].reason' <<<"$OUT")"
 
 # timeLeftFraction never goes below 0.05: a window about to reset does not give an unbounded score.
 jq '.result.rateLimits.codex.session.resetsAt = 1000000001000' "$STUB_DIR/bm55.json" >"$STUB_DIR/floor.json"
@@ -119,14 +130,35 @@ run "$STUB_DIR/floor.json" --reserved claude
 assert_eq "the time fraction has a floor of 0.05" "0.05" \
   "$(jq '[.providers[] | select(.provider == "codex")][0].windows[0].timeLeftFraction' <<<"$OUT")"
 
+# A provider with no weekly window cannot be scored.
+jq 'del(.result.rateLimits.antigravity.weekly)' "$STUB_DIR/bm55.json" >"$STUB_DIR/noweekly.json"
+run "$STUB_DIR/noweekly.json" --reserved claude
+assert_eq "no weekly window is skipped" "no weekly window" \
+  "$(jq -r '[.providers[] | select(.provider == "antigravity")][0].reason' <<<"$OUT")"
+
 # Scores within 5 percent tie and go to the reserved provider.
 cat >"$STUB_DIR/tie.json" <<JSON
 {"result":{"rateLimits":{
-  "claude":{"status":"ok","session":$(win 50 300 150),"weekly":$(win 10 10080 5040)},
+  "claude":{"status":"ok","session":$(win 40 300 150),"weekly":$(win 10 10080 5040)},
   "codex":{"status":"ok","session":$(win 50 300 150),"weekly":$(win 11 10080 5040)}}}}
 JSON
 run "$STUB_DIR/tie.json" --reserved claude
 assert_eq "a tie goes to the reserved provider" "claude" "$(jq -r .chosen <<<"$OUT")"
+
+# No worker eligible: the reserved provider takes the task while it is under 90 in every window.
+jq '.result.rateLimits.claude.weekly.usedPercent = 80
+  | .result.rateLimits.codex.session.usedPercent = 100
+  | .result.rateLimits.antigravity.weekly.usedPercent = 100
+  | .result.rateLimits.opencodeGo.weekly.usedPercent = 100' "$STUB_DIR/bm55.json" >"$STUB_DIR/fallback.json"
+run "$STUB_DIR/fallback.json" --reserved claude --tier Mid
+assert_eq "no worker eligible falls back to the reserved provider" "0 claude true claude-sonnet-5-5" \
+  "$CODE $(jq -r '[.chosen, .fallback, .model] | join(" ")' <<<"$OUT")"
+assert_eq "the table marks the fallback" "1" "$(jq -r .table <<<"$OUT" | grep -c 'chosen (fallback')"
+jq '.result.rateLimits.claude.weekly.usedPercent = 92' "$STUB_DIR/fallback.json" >"$STUB_DIR/fallback92.json"
+run "$STUB_DIR/fallback92.json" --reserved claude
+assert_eq "no fallback when the reserved provider is at 90 or more" "1 null" "$CODE $(jq -r .chosen <<<"$OUT")"
+run "$STUB_DIR/bm55.json" --reserved claude
+assert_eq "no fallback while a worker is eligible" "false" "$(jq .fallback <<<"$OUT")"
 
 # Nothing eligible exits 1 and reports the earliest reset.
 jq '.result.rateLimits |= with_entries(.value.status = "error")' "$STUB_DIR/bm55.json" >"$STUB_DIR/none.json"
@@ -135,7 +167,7 @@ assert_eq "no eligible provider exits 1" "1 null" "$CODE $(jq -r .chosen <<<"$OU
 
 # The orchestrator check looks only at the reserved provider with 90 in every window.
 run "$STUB_DIR/bm55.json" --reserved claude --orchestrator
-assert_eq "orchestrator mode picks claude at weekly 79" "claude" "$(jq -r .chosen <<<"$OUT")"
+assert_eq "orchestrator mode picks claude at weekly 79 (pause check is 90)" "claude" "$(jq -r .chosen <<<"$OUT")"
 
 # A missing --reserved is a usage error, so the caller cannot skip naming its provider.
 run "$STUB_DIR/bm55.json"
@@ -144,7 +176,7 @@ assert_eq "missing --reserved exits 2" "2" "$CODE"
 # Tier resolution adds launch details while preserving quota selection.
 run "$STUB_DIR/bm55.json" --reserved claude --tier Mid
 assert_eq "Mid picks the scored provider and its launch details" \
-  "0 opencodeGo opencode-go/deepseek-v4-pro opencode Mid" \
+  "0 codex gpt-6.1-sol codex Mid" \
   "$CODE $(jq -r '[.chosen, .model, .agent, .tier] | join(" ")' <<<"$OUT")"
 run "$STUB_DIR/bm55.json" --reserved claude --tier Low
 assert_eq "Low skips antigravity without a usable model" "no Low model" \
@@ -153,8 +185,9 @@ run "$STUB_DIR/bm55.json" --reserved claude --tier High
 assert_eq "High requires approval" "2" "$CODE"
 assert_eq "High refusal asks for the user's OK" "1" "$(grep -c "needs the user's OK" "$STUB_DIR/stderr")"
 run "$STUB_DIR/bm55.json" --reserved claude --tier High --allow-high
-assert_eq "approved High resolves its model" "1 no High model" \
-  "$CODE $(jq -r '.providers[] | select(.provider == "codex") | .reason' <<<"$OUT")"
+assert_eq "approved High resolves its model, workers have none so the reserved provider falls back" \
+  "0 no High model claude-opus-5-5" \
+  "$CODE $(jq -r '.providers[] | select(.provider == "codex") | .reason' <<<"$OUT") $(jq -r .model <<<"$OUT")"
 run "$STUB_DIR/bm55.json" --reserved claude
 assert_eq "without a tier no model is added" "false" "$(jq 'has("model")' <<<"$OUT")"
 run "$STUB_DIR/bm55.json" --reserved claude --tier bogus
@@ -175,11 +208,11 @@ assert_eq "main_cutoff 0.15 skips claude at session 20" "session 20 >= 15, weekl
 
 cfg '{"main_orchestrator":"claude","main_cutoff":0.9}'
 run "$STUB_DIR/bm55.json" --reserved claude --config "$STUB_DIR/cfg.json"
-assert_eq "main_cutoff 0.9 lifts the reserved 75 cutoff" "null" "$(reason claude)"
+assert_eq "main_cutoff 0.9 lifts the reserved 50 cutoff" "null" "$(reason claude)"
 
-cfg '{"main_orchestrator":"claude","main_cutoff":0.5}'
+cfg '{"main_orchestrator":"claude","main_cutoff":0.15}'
 run "$STUB_DIR/bm55.json" --reserved claude --orchestrator --config "$STUB_DIR/cfg.json"
-assert_eq "main_cutoff replaces the 90 pause check" "null" "$(jq -r .chosen <<<"$OUT")"
+assert_eq "main_cutoff does not change the 90 pause check" "claude" "$(jq -r .chosen <<<"$OUT")"
 
 run "$STUB_DIR/bm55.json" --reserved codex --config "$STUB_DIR/cfg.json"
 assert_eq "mismatched main_orchestrator warns" "1" "$(jq '.warnings | length' <<<"$OUT")"

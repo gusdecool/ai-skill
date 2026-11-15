@@ -4,22 +4,26 @@
 #                      [--config <path>] [--tier Low|Mid|High|Ultra] [--allow-high]
 #   --tier         resolve worker models before scoring; ignored with --orchestrator.
 #   --allow-high   permit High or Ultra after the user approves that tier.
-#   --reserved     the provider the caller runs on; it gets the 80 session / 75 weekly+monthly cutoffs (use `none`
+#   --reserved     the provider the caller runs on; it gets the 50 cutoff in every window (use `none`
 #                  when the caller is not one of the four providers).
-#   --bump         adds 5 points to that provider's session usedPercent (repeat once per task already picked in
-#                  this batch), so parallel tasks spread out.
+#   --bump         adds 5 points to that provider's session and weekly usedPercent (repeat once per task already
+#                  picked in this batch), so parallel tasks spread out.
 #   --exclude      comma separated providers to leave out (for example those with no model in the asked tier).
-#   --orchestrator only the reserved provider is considered, with 90 in every window (the pause check).
+#   --orchestrator only the reserved provider is considered, with 90 in every window (the pause check; config cutoffs
+#                  do not apply).
 #   --config       JSON file with user cutoffs (default ~/.config/load-balancer/config.json, optional). A configured
 #                  cutoff (fraction 0..1, applied to every window) replaces the defaults below for that provider; see
 #                  docs/superpowers/specs/2026-11-11-load-balancer-config-design.md. Bad config exits 2.
 # Prints one JSON object (plus "warnings"): {reserved, providers[{provider, skipped, reason, score, freeAt, windows[...]}], chosen,
 # earliestResetsAt (only when nothing is eligible), table (markdown score table)}. Exit 0 when a provider is chosen,
 # 1 when none is eligible, 2 when quotas cannot be read or the arguments are wrong.
-# Rules: skip a provider at session >= 90 or weekly / monthly >= 95 (80 / 75 when reserved); per window
+# Fallback: when no provider is eligible, the reserved provider is chosen if it is under 90 in every window
+# ("fallback": true in the output); the orchestrator pause check is the only thing that stops it then.
+# Rules: skip a provider at 90 or more in any window (50 when reserved); per window
 # remaining = 100 - usedPercent, timeLeftFraction = (resetsAt - now) / (windowMinutes * 60000) with a floor of 0.05,
-# urgency = remaining / timeLeftFraction; score = highest window urgency; highest score wins; scores within 5 percent
-# tie and go to the reserved provider, then to the listed order. Providers: claude, codex, antigravity, opencodeGo.
+# urgency = remaining / timeLeftFraction; score = the weekly window's urgency only (session and monthly only gate
+# eligibility); highest score wins; scores within 5 percent tie and go to the reserved provider, then to the listed
+# order. Providers: claude, codex, antigravity, opencodeGo.
 # Env: MODELS_FILE overrides the model table; RESOLVE_MODEL overrides the model-policy resolver.
 # Env: ORCA_BIN (default: orca from PATH, else ORCA_FALLBACK_BIN), NOW_MS (clock in ms, for tests).
 set -euo pipefail
@@ -123,16 +127,18 @@ now_ms="${NOW_MS:-$(($(date +%s) * 1000))}"
 result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson bumps "$bumps" --arg res "$reserved" \
   --argjson cfg "$cfg" --arg exclude "$exclude" \
   --argjson models "$models" --argjson missing "$missing_models" --arg tier "$tier" '
-  # Cutoff for a window: the orchestrator check uses 90; the reserved provider keeps quota for planning and review.
+  # Cutoff for a window: the pause check is always 90; the reserved provider keeps half its quota for planning and
+  # review; every other provider stops at 90.
   def cutoff($p; $n):
-    if $cfg.cutoffs[$p] != null then $cfg.cutoffs[$p]
-    elif $orch then 90
-    elif $p == $res then (if $n == "session" then 80 else 75 end)
-    else (if $n == "session" then 90 else 95 end) end;
+    if $orch then 90
+    elif $cfg.cutoffs[$p] != null then $cfg.cutoffs[$p]
+    elif $p == $res then 50
+    else 90 end;
   def r1: . * 10 | round / 10;
   # One quota window with its remaining share, time fraction, urgency and cutoff verdict.
   def window($p; $n; $w):
-    (if $n == "session" then ([$w.usedPercent + 5 * ($bumps | map(select(. == $p)) | length), 100] | min)
+    (if $n == "session" or $n == "weekly"
+     then ([$w.usedPercent + 5 * ($bumps | map(select(. == $p)) | length), 100] | min)
      else $w.usedPercent end) as $used
     | ([($w.resetsAt - $now) / ($w.windowMinutes * 60000), 0.05] | max) as $tlf
     | {window: $n, usedPercent: $used, remaining: (100 - $used), timeLeftFraction: ($tlf * 1000 | round / 1000),
@@ -143,14 +149,18 @@ result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson
      | .key as $p | .value as $v
      | [("session", "weekly", "monthly") as $n | select($v[$n] != null) | window($p; $n; $v[$n])] as $ws
      | ($ws | map(select(.over))) as $blocked
+     | ([$ws[] | select(.window == "weekly") | .urgency][0]) as $weekly
      | {provider: $p, windows: $ws,
-        score: (if ($ws | length) > 0 then ($ws | map(.urgency) | max) else null end),
+        score: $weekly,
+        fallbackOk: ($p == $res and $v.status == "ok" and $weekly != null and ($excluded | index($p)) == null
+                     and $missing[$p] == null and all($ws[]; .usedPercent < 90)),
         freeAt: (if ($blocked | length) > 0 then ($blocked | map(.resetsAt) | max) else null end),
         reason: (if $orch and $p != $res then "not the orchestrator"
                  elif ($excluded | index($p)) != null then "excluded"
                  elif $missing[$p] != null then $missing[$p]
                  elif $v.status != "ok" then "status " + ($v.status // "missing")
                  elif ($ws | length) == 0 then "no quota windows"
+                 elif $weekly == null then "no weekly window"
                  elif ($blocked | length) > 0 then
                    ($blocked | map(.window + " " + (.usedPercent | tostring) + " >= " + (.cutoff | tostring))
                     | join(", ")) + (if $cfg.cutoffs[$p] != null then " (config)"
@@ -159,9 +169,13 @@ result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson
      | .skipped = (.reason != null)] as $ps
   | ($ps | map(select(.skipped | not))) as $ok
   | (($ok | map(.score) | max) // 0) as $top
-  | ([$ok[] | select(.score >= $top * 0.95)] | (map(select(.provider == $res)) + .)[0].provider) as $chosen
+  | ([$ok[] | select(.score >= $top * 0.95)] | (map(select(.provider == $res)) + .)[0].provider) as $scored
+  # No worker is eligible: the reserved provider takes the task while it is under 90 in every window.
+  | ($ps | map(select(.fallbackOk)) | .[0].provider) as $fallback
+  | ($scored // (if $orch then null else $fallback end)) as $chosen
+  | ($scored == null and $chosen != null) as $isFallback
   | def cell($p; $n): ([$p.windows[] | select(.window == $n) | .urgency | tostring][0] // "-");
-    {reserved: $res, providers: $ps, chosen: $chosen, warnings: $cfg.warnings}
+    {reserved: $res, providers: $ps, chosen: $chosen, fallback: $isFallback, warnings: $cfg.warnings}
     + (if $chosen != null and $models[$chosen] != null then
          {tier: $tier, agent: $models[$chosen].agent, model: $models[$chosen].launchId} else {} end)
     + (if $chosen == null then
@@ -169,7 +183,8 @@ result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson
     + {table: (["| Provider | Session | Weekly | Monthly | Score | Result |", "|---|---|---|---|---|---|"]
         + [$ps[] | "| \(.provider) | \(cell(.; "session")) | \(cell(.; "weekly")) | \(cell(.; "monthly")) | "
            + "\(.score // "-") | "
-           + (if .skipped then "skipped: " + .reason elif .provider == $chosen then "chosen" else "eligible" end)
+           + (if .provider == $chosen then (if $isFallback then "chosen (fallback, no worker)" else "chosen" end)
+              elif .skipped then "skipped: " + .reason else "eligible" end)
            + " |"]
         | join("\n"))}' <<<"$accounts")" || die "cannot compute the scores"
 echo "$result"

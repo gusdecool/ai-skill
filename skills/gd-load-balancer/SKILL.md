@@ -58,9 +58,9 @@ Why: the user decides how much of each quota to spend, for example keeping half 
 
 - `cutoff` is a fraction from 0 to 1 of used quota; a provider is skipped when any window (session, weekly, monthly)
   reaches it. `reason` fields are notes for humans and are ignored.
-- `main_cutoff` replaces the reserved cutoffs (80 / 75) and the 90 of the pause check, but only when
-  `main_orchestrator` equals your provider. On a mismatch the defaults apply and `warnings` says so; tell the user.
-- A worker in `workers` uses its `cutoff` instead of 90 / 95. A provider not listed uses the default strategy below.
+- `main_cutoff` replaces the reserved cutoff (50), but only when `main_orchestrator` equals your provider. It does not
+  change the pause check, which stays at 90. On a mismatch the defaults apply and `warnings` says so; tell the user.
+- A worker in `workers` uses its `cutoff` instead of 90. A provider not listed uses the default strategy below.
 - Provider names are `claude`, `codex`, `antigravity`, `opencodeGo`. No file means defaults. A bad file or value makes
   the script exit 2: stop and tell the user, do not guess. Why: a typo must not silently drop a cap.
 
@@ -83,8 +83,8 @@ If the user pinned a provider for the task, use it and do not balance.
 **Run `scripts/pick-provider --reserved <your provider> --tier <tier>` (path: next to this SKILL.md).
 Always pass `--tier`. Use its `chosen` provider and printed `model` (the launch id).
 Never choose a provider by hand.** Why: in a real run (BM-55) the agent saw Codex under its cutoffs and dispatched to
-it without computing the urgency; by the formula OpenCode Go (about 291) beat Codex (about 213). The formula is a
-script so a model cannot shortcut it to "first provider under its cutoff".
+it without computing the urgency, and the formula picked another provider. The formula is a script so a model cannot
+shortcut it to "first provider under its cutoff".
 
 The script reads the quotas itself (`orca account list --json`), so you do not read them first, and prints JSON: every
 provider with each window's urgency, its score, whether it was skipped and why, `chosen`, and a markdown `table`.
@@ -106,32 +106,39 @@ the formula ran and that the tier was chosen on purpose. A dispatch with no tabl
 What the script does (the rules, kept here so you can read its output):
 
 1. **Cutoffs.** Unless the user config sets one for the provider (see "User config"), skip a provider whose
-   session `usedPercent` is 90 or more, or weekly or monthly is 95 or more. For your own (reserved) provider use 80
-   for session and 75 for weekly and monthly instead, so you keep quota for planning, review and questions. A provider
-   whose status is not ok, or with no windows, is skipped.
-2. **Urgency.** For every window of each remaining provider:
+   `usedPercent` is 90 or more in any window (session, weekly or monthly). For your own (reserved) provider use 50
+   in every window instead, so you keep half the quota for planning, review and questions; above 50 it hands tasks to
+   workers. A provider whose status is not ok, or with no weekly window, is skipped. Why: the session window only
+   gates eligibility, so a task is never sent to a provider that is nearly out.
+2. **Urgency.** For the weekly window of each remaining provider:
    - `remaining = 100 - usedPercent`
    - `timeLeftFraction = (resetsAt - now) / (windowMinutes * 60000)`, never below 0.05
    - `urgency = remaining / timeLeftFraction`
 
-   A provider's score is its highest window urgency. High means much unused quota and little time left to use it.
-   The highest score wins.
-3. **Tie-break** when scores are within 5 percent: your own provider first, then the order the tool lists them.
-4. **Parallel tasks.** After each pick, run the script again with one more `--bump <that provider>` (it adds 5 points to
-   that provider's session `usedPercent`), so tasks spread out. Quotas are re-read on every run.
+   A provider's score is its weekly urgency; session and monthly are not scored. High means much unused weekly quota
+   and little time left to use it, so the weekly quota gets used up before it resets. The highest score wins. If a
+   worker's session fills mid-task, the stuck-worker watch hands the task to the next provider.
+3. **Fallback.** If no worker is eligible, the script chooses your own provider (`fallback: true`) while it is under 90
+   in every window, even above its 50 cutoff. Dispatch a subagent as usual. Why: the owner wants the orchestrator to
+   take the job rather than stall when every worker is at its cutoff. The pause check at 90 still stops it.
+4. **Tie-break** when scores are within 5 percent: your own provider first, then the order the tool lists them.
+5. **Parallel tasks.** After each pick, run the script again with one more `--bump <that provider>` (it adds 5 points to
+   that provider's session and weekly `usedPercent`), so tasks spread out. Quotas are re-read on every run.
 
 ### Worked example (caller is Claude; quotas read 2026-10-28 02:30)
 
-| Provider | Session used, time left | Session urgency | Weekly used, time left | Weekly urgency | Score |
-|---|---|---|---|---|---|
-| claude | 31%, 1.4 h of 5 h | 69 / 0.28 = 246 | 81%, 32.5 h of 168 h | 19 / 0.19 = 98 | skipped, weekly 81% is over 75% |
-| codex | 1%, 3.5 h of 5 h | 99 / 0.70 = 141 | 15%, 159.8 h of 168 h | 85 / 0.95 = 89 | 141 |
-| antigravity | none | none | 9%, 129.4 h of 168 h | 91 / 0.77 = 118 | 118 |
+| Provider | Session used | Weekly used, time left | Weekly urgency (the score) | Result |
+|---|---|---|---|---|
+| claude | 31% | 81%, 32.5 h of 168 h | 19 / 0.19 = 98 | skipped, weekly 81% is over its reserved 50% |
+| codex | 1% | 15%, 159.8 h of 168 h | 85 / 0.95 = 89 | eligible, 89 |
+| antigravity | 4% | 9%, 129.4 h of 168 h | 91 / 0.77 = 118 | eligible, 118, chosen |
 
-Claude is skipped because its weekly 81% is over its reserved 75% cutoff. Picks go codex (141), then antigravity (118)
-once Codex's session numbers shift. If the caller were Codex, the same rule would reserve Codex instead.
+Claude is skipped because its weekly 81% is over its reserved 50% cutoff. Antigravity wins with 118. Each `--bump`
+lowers its score by about 6, so Codex takes tasks once enough are already picked. If the caller were Codex, the same
+rule would reserve Codex instead.
 
-If no worker provider is eligible, the tasks wait for the earliest `resetsAt`: see "Waiting for a quota reset" below.
+If no provider is eligible, including your own under 90, the tasks wait for the earliest `resetsAt`: see "Waiting for a
+quota reset" below.
 
 ## Dispatching
 
@@ -182,8 +189,9 @@ Only the orchestrator (the provider you run on) pauses the whole job. A worker's
 reason to stop: take the task over with the next eligible provider (see "Watching for stuck workers"). Never ask the
 user whether to wait; read the reset time from the tool and tell them when the work continues.
 
-1. **Trigger.** When the orchestrator's own provider reaches 90% in either window (session or weekly), or its `main_cutoff` from the user config, start this
-   procedure. Do not start new tasks. Let each running worker finish its current step, accept its report, and record
+1. **Trigger.** When the orchestrator's own provider reaches 90% in either window (session or weekly), start this
+   procedure. The `main_cutoff` (50) does not trigger it: it only stops the orchestrator taking tasks itself.
+   Do not start new tasks. Let each running worker finish its current step, accept its report, and record
    the state in the plan file (ticked boxes, WIP commits noted).
 2. **Read the reset time from the tool** (`resetsAt` of the window at or over 90%, the later one if both) and tell the
    user in one message: which window is full, the local clock time work will continue, and that nothing is lost
