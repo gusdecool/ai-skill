@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Records the agent cost of an orchestrated ticket in Jira: this session's minutes, tokens and cost, plus the model of
 # every worker on another provider.
-#   ticket-record-stats <KEY> --since <ISO> [--end <ISO>] [--worktree <path>] [--model <provider:model>]...
+#   ticket-record-stats <KEY> --since <ISO> [--end <ISO>] [--worktree <path>] [--codex-worktree <path>]...
+#                       [--model <provider:model>]...
 # --since is when work on the ticket began (for example the plan commit time). --end is when it stopped, only needed
-# when the same session went on to another ticket; the cost since --end is then subtracted. Each --model is a worker
-# whose usage cannot be read from logs (Codex, Gemini, OpenCode); it is recorded with unknown numbers. Safe to run
-# twice: a session run with the same start and a model already on the ticket are skipped. Exit 0 when the ticket's
+# when the same session went on to another ticket; the cost since --end is then subtracted. Each --codex-worktree is
+# the worktree of a Codex worker: its Codex logs give minutes and tokens per model, one entry for the worker and one for
+# each child agent it spawned. Each --model is a worker on a provider whose usage cannot be read (Gemini, OpenCode);
+# it is recorded with unknown numbers. Safe to run twice: a run with the same provider and start, and a model already
+# on the ticket, are skipped. Exit 0 when the ticket's
 # runs list the session and every --model afterwards, 1 when something is missing, 2 on usage errors.
 # BOARD_SCRIPTS overrides the folder of the gd-board-worker scripts (used by the tests).
 set -uo pipefail
@@ -50,11 +53,26 @@ record_session() {
   "$BOARD/board-ticket-cli" stats "$key" <<<"$stats"
 }
 
+# Records the Codex worker whose worktree is $2 on ticket $1 from $3; prints its start time, or nothing when no logs.
+record_codex() {
+  local key="$1" path="$2" since="$3" stats start
+  stats="$("$BOARD/board-run-stats" "$path" --provider codex --since "$since")" || return 1
+  start="$(jq -r '.startedAt // empty' <<<"$stats")"
+  [ -n "$start" ] || { echo "ticket-record-stats: no Codex logs for $path" >&2; return 1; }
+  if ! "$BOARD/board-ticket-cli" runs "$key" | jq -e --arg s "$start" \
+    'any(.[]; .provider == "codex" and .startedAt == $s)' >/dev/null; then
+    "$BOARD/board-ticket-cli" stats "$key" <<<"$stats" || return 1
+  else
+    echo "codex worker $path already recorded on $key" >&2
+  fi
+  echo "$start"
+}
+
 # Parses the arguments, records the session and the workers, then checks the ticket's runs.
 main() {
   [ "$#" -ge 1 ] ||
     die "usage: ticket-record-stats <KEY> --since <ISO> [--end <ISO>] [--worktree <path>] [--model p:m]..."
-  local key="$1" since="" end="" worktree="" models=() m
+  local key="$1" since="" end="" worktree="" models=() codex=() starts=() m c st
   shift
   while [ "$#" -gt 0 ]; do
     [ "$#" -ge 2 ] || die "missing value for $1"
@@ -63,6 +81,7 @@ main() {
       --end) end="$2" ;;
       --worktree) worktree="$2" ;;
       --model) models+=("$2") ;;
+      --codex-worktree) codex+=("$2") ;;
       *) die "unknown option: $1" ;;
     esac
     shift 2
@@ -73,6 +92,9 @@ main() {
   local failed=0
   record_session "$key" "$since" "$end" "$worktree" ||
     { echo "ticket-record-stats: session stats failed" >&2; failed=1; }
+  for c in ${codex[@]+"${codex[@]}"}; do
+    st="$(record_codex "$key" "$c" "$since")" && starts+=("$st") || failed=1
+  done
   for m in ${models[@]+"${models[@]}"}; do
     # Skips a worker model already on the ticket.
     if "$BOARD/board-ticket-cli" runs "$key" | jq -e --arg m "$m" 'any(.[].models[]?; .label == $m)' >/dev/null; then
@@ -86,6 +108,10 @@ main() {
   local runs
   runs="$("$BOARD/board-ticket-cli" runs "$key")" || return 2
   jq -e 'any(.[]; .provider == "claude")' >/dev/null <<<"$runs" || { echo "missing: claude session run" >&2; failed=1; }
+  for st in ${starts[@]+"${starts[@]}"}; do
+    jq -e --arg s "$st" 'any(.[]; .provider == "codex" and .startedAt == $s)' >/dev/null <<<"$runs" ||
+      { echo "missing: codex run started $st" >&2; failed=1; }
+  done
   for m in ${models[@]+"${models[@]}"}; do
     jq -e --arg m "$m" 'any(.[].models[]?; .label == $m)' >/dev/null <<<"$runs" || { echo "missing: $m" >&2; failed=1; }
   done

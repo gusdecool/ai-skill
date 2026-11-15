@@ -1,0 +1,4 @@
+{"timestamp":"2026-11-15T00:01:00.000Z","type":"session_meta","payload":{"cwd":"/wt/cx"}}
+{"timestamp":"2026-11-15T00:01:00.000Z","type":"turn_context","payload":{"cwd":"/wt/cx","model":"codex-auto-review"}}
+{"timestamp":"2026-11-15T00:01:00.000Z","type":"event_msg","payload":{"type":"token_count","info":null}}
+{"timestamp":"2026-11-15T00:11:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":400,"cached_input_tokens":300,"output_tokens":10}}}}

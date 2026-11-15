@@ -26,7 +26,7 @@
 #       exist is skipped with a stderr line (run board-setup --stats-fields); the comment is still posted. A failure
 #       of the models field or the property only prints a stderr line.
 #   board-ticket-cli stats <key> --model <provider:model> [--model <provider:model> ...]
-#       for a worker on another provider whose usage cannot be read from logs (Codex, Gemini, OpenCode): adds the
+#       for a worker on a provider whose usage cannot be read from logs (Gemini, OpenCode): adds the
 #       labels to "Agent models" and appends a run whose minutes, tokens and costUsd are null (unknown). Reads no
 #       stdin and changes no total.
 #   board-ticket-cli runs <key>

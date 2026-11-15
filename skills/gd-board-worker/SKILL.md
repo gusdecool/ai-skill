@@ -212,8 +212,10 @@ On every way out (QA, HITL or Stopping), once, just before the status move: run
 `board-run-stats "$(git rev-parse --show-toplevel)" --since <the ISO time of the "started" comment> |
 board-ticket-cli stats <key>`. If it prints an error, ignore it and carry on; never retry it more than once and never
 let it delay the status move. The numbers cover this session's logs only: Claude subagents are counted, workers on
-another provider or in another worktree are not; a worker on another provider is recorded by its model label only,
-with `board-ticket-cli stats <key> --model <provider:model>` (unknown minutes, tokens and cost; it reads no stdin).
+another provider or in another worktree are not. A Codex worker is read from its own logs with
+`board-run-stats <its worktree> --provider codex | board-ticket-cli stats <key>` (one entry per model, child agents
+included); a worker on a provider whose usage cannot be read is recorded by its model label only, with
+`board-ticket-cli stats <key> --model <provider:model>` (unknown minutes, tokens and cost; it reads no stdin).
 The fields add up over runs, so a ticket that is retried shows its total, and `agent.runs` keeps every run.
 
 ## Stopping

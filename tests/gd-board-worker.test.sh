@@ -1322,6 +1322,35 @@ OUT="$(bash "$RUNSTATS" /wt/bm-2 --provider opencode)"
 assert_eq "stats --provider is the fallback label prefix" "opencode:claude-brand-new-1" \
   "$(jq -r '.models[] | select(.model == "claude-brand-new-1") | .label' <<<"$OUT")"
 
+# Codex logs: one worker log and one child-agent log for the same worktree, plus a log of another worktree.
+export BOARD_CODEX_SESSIONS="$FIX/codex-logs"
+mkdir -p "$BOARD_CODEX_SESSIONS/2026/11/15"
+# Writes a fake Codex log: $1 file, $2 cwd, $3 model, $4 input, $5 cached, $6 output, $7 start time, $8 end time.
+write_codex_log() {
+  {
+    printf '{"timestamp":"%s","type":"session_meta","payload":{"cwd":"%s"}}\n' "$7" "$2"
+    printf '{"timestamp":"%s","type":"turn_context","payload":{"cwd":"%s","model":"%s"}}\n' "$7" "$2" "$3"
+    printf '{"timestamp":"%s","type":"event_msg","payload":{"type":"token_count","info":null}}\n' "$7"
+    printf '{"timestamp":"%s","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":' "$8"
+    printf '{"input_tokens":%s,"cached_input_tokens":%s,"output_tokens":%s}}}}\n' "$4" "$5" "$6"
+  } >"$BOARD_CODEX_SESSIONS/2026/11/15/$1"
+}
+write_codex_log rollout-a.jsonl /wt/cx gpt-x 1000 900 50 2026-11-15T00:00:00.000Z 2026-11-15T00:12:00.000Z
+write_codex_log rollout-b.jsonl /wt/cx codex-auto-review 400 300 10 2026-11-15T00:01:00.000Z 2026-11-15T00:11:00.000Z
+write_codex_log rollout-c.jsonl /wt/other gpt-x 5000 0 5 2026-11-15T00:00:00.000Z 2026-11-15T00:05:00.000Z
+OUT="$(bash "$RUNSTATS" /wt/cx --provider codex)"
+assert_eq "codex stats has one entry per agent" "codex:codex-auto-review codex:gpt-x" \
+  "$(jq -r '[.models[].label] | sort | join(" ")' <<<"$OUT")"
+assert_eq "codex stats splits cached input from input" "100 900 50" \
+  "$(jq -r '.models[] | select(.model == "gpt-x") | "\(.input) \(.cacheRead) \(.output)"' <<<"$OUT")"
+assert_eq "codex stats ignores other worktrees and sums tokens" "1460" "$(jq -r '.tokens' <<<"$OUT")"
+assert_eq "codex stats measures minutes over all agents" "12" "$(jq -r '.minutes' <<<"$OUT")"
+assert_eq "codex stats marks unpriced models" "2" "$(jq -r '.unpriced | length' <<<"$OUT")"
+assert_eq "codex stats table says price unknown" "2" "$(jq -r '.markdown' <<<"$OUT" | grep -c 'price unknown')"
+OUT="$(bash "$RUNSTATS" /wt/none --provider codex 2>/dev/null)"
+assert_eq "codex stats with no logs exits 0 with zeros" "0" "$(jq -r '.tokens' <<<"$OUT")"
+export BOARD_CODEX_SESSIONS="$FIX/codex-none"
+
 FIELDS='[{"id":"customfield_1","name":"Agent minutes","custom":true},
   {"id":"customfield_2","name":"Agent tokens","custom":true},
   {"id":"customfield_3","name":"Agent cost USD","custom":true}]'
