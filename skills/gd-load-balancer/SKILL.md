@@ -225,7 +225,8 @@ first.
   and `opencodeGo` also `monthly`, with `usedPercent`, `windowMinutes`, `resetsAt`. A provider whose `status` is not
   `ok` is unavailable; `opencodeGo` reports `missing-credentials` until its API key is set in Orca settings.
 - **Launch:** `orca agent launch --agent <claude|codex|opencode> --worktree <selector> --prompt <text>`. Gemini runs
-  through the Antigravity CLI (`agy`). For orchestrated workers use `orca orchestration worker-start` with `--model` set
+  through the Antigravity CLI (`agy`), but Orca's `--agent` id is `antigravity`; `agy` fails with
+  `agent_unconfigured`. For orchestrated workers use `orca orchestration worker-start` with `--model` set
   explicitly and `--worktree current`. For Claude and Codex workers also pass `--effort medium` (the flag is in
   `worker-start --help`; OpenCode ignores it). Why: `gd-model-policy` sets effort to medium, and a launch without the
   flag uses the worker's own default, which can be higher and burns quota.

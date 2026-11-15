@@ -37,8 +37,11 @@ rates them as Sonnet-class for the work. DeepSeek V4.1 Flash and Kimi K2.6 are L
 |---|---|---|
 | claude | claude | Claude |
 | codex | codex | Codex |
-| antigravity | agy | Gemini |
+| antigravity | antigravity | Gemini |
 | opencodeGo | opencode | DeepSeek, Kimi |
+
+The middle column is the id Orca takes in `--agent`, not always the CLI name. Antigravity's CLI is `agy`, but Orca's id
+is `antigravity`; `--agent agy` fails with `agent_unconfigured`. Why: BM-27's first worker launch failed that way.
 
 ## Launch IDs
 
