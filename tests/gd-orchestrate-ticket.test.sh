@@ -68,7 +68,10 @@ mkdir -p "$STUB_DIR/board"
 # shellcheck disable=SC2016 # the stub body must keep its $(...) unexpanded
 printf '#!/usr/bin/env bash\ncat "%s/ready"\n[ "$(jq .ready "%s/ready")" = true ]\n' "$STUB_DIR" "$STUB_DIR" \
   >"$STUB_DIR/board/board-check-ready"
-printf '#!/usr/bin/env bash\ncat "%s/ticket"\n' "$STUB_DIR" >"$STUB_DIR/board/board-ticket-cli"
+# shellcheck disable=SC2016 # the stub body must keep its $1 unexpanded
+printf '#!/usr/bin/env bash\nif [ "$1" = blockers ]; then cat "%s/blockers"; else cat "%s/ticket"; fi\n' \
+  "$STUB_DIR" "$STUB_DIR" >"$STUB_DIR/board/board-ticket-cli"
+echo '[]' >"$STUB_DIR/blockers"
 chmod +x "$STUB_DIR/board/"*
 
 # Runs ticket-gate; stdout goes to OUT, the exit code to CODE.
@@ -95,5 +98,16 @@ echo '{"components":["ghost"]}' >"$STUB_DIR/ticket"
 gate
 assert_eq "gate: unmatched component exits 1" 1 "$CODE"
 assert_eq "gate: unmatched component is listed" "Repo mapping" "$(jq -r '.missing[0]' <<<"$OUT")"
+
+echo '{"components":["api"]}' >"$STUB_DIR/ticket"
+echo '{"ready":true,"missing":[]}' >"$STUB_DIR/ready"
+echo '[{"key":"BM-9","status":"Backlog","finished":false}]' >"$STUB_DIR/blockers"
+gate
+assert_eq "gate: unfinished blocker exits 1" 1 "$CODE"
+assert_eq "gate: unfinished blocker is listed" "Blocker BM-9" "$(jq -r '.missing[0]' <<<"$OUT")"
+
+echo '[{"key":"BM-9","status":"Done","finished":true}]' >"$STUB_DIR/blockers"
+gate
+assert_eq "gate: finished blocker does not ask" 0 "$CODE"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; else echo "$FAILS failed"; exit 1; fi
