@@ -110,4 +110,61 @@ echo '[{"key":"BM-9","status":"Done","finished":true}]' >"$STUB_DIR/blockers"
 gate
 assert_eq "gate: finished blocker does not ask" 0 "$CODE"
 
+# ticket-record-stats: board-run-stats and board-ticket-cli are stubs; the CLI keeps its runs in $STUB_DIR/runs.json.
+REC="$REPO/skills/gd-orchestrate-ticket/scripts/ticket-record-stats"
+mkdir -p "$STUB_DIR/rec"
+cat >"$STUB_DIR/rec/board-run-stats" <<STUB
+#!/usr/bin/env bash
+# Prints \$STUB_DIR/stats-<since> for the --since value given.
+cat "$STUB_DIR/stats-\$3"
+STUB
+cat >"$STUB_DIR/rec/board-ticket-cli" <<STUB
+#!/usr/bin/env bash
+f="$STUB_DIR/runs.json"
+case "\$1" in
+  runs) cat "\$f" ;;
+  *)
+    if [ "\$3" = --model ]; then
+      jq -c --arg m "\$4" '. + [{provider: "codex", startedAt: null, models: [{label: \$m}]}]' "\$f" >"\$f.new"
+    else
+      jq -c -s '.[0] + [.[1] | {provider, startedAt, minutes, costUsd, models}]' "\$f" - >"\$f.new"
+    fi
+    mv "\$f.new" "\$f"
+    ;;
+esac
+STUB
+chmod +x "$STUB_DIR/rec/"*
+
+# Writes a fake stats file for a --since value: minutes, tokens, cost for one claude model.
+set_stats() {
+  printf '{"provider":"claude","startedAt":"%s","minutes":%s,"tokens":%s,"costUsd":%s,"models":[{"label":"claude:m",
+"input":%s,"output":0,"cacheRead":0,"cacheWrite":0,"costUsd":%s}],"markdown":"x"}\n' "$1" "$2" "$3" "$4" "$3" "$4" \
+    >"$STUB_DIR/stats-$1"
+}
+
+# Runs ticket-record-stats; stdout goes to OUT, the exit code to CODE.
+# shellcheck disable=SC2034 # OUT and CODE are read by the assertions
+rec() {
+  OUT="$(BOARD_SCRIPTS="$STUB_DIR/rec" bash "$REC" BM-1 --worktree "$STUB_DIR" "$@" 2>&1)"
+  CODE=$?
+}
+
+set_stats 2026-01-01T00:00:00Z 100 1000 4.00
+set_stats 2026-01-01T01:00:00Z 40 400 1.50
+echo '[]' >"$STUB_DIR/runs.json"
+rec --since 2026-01-01T00:00:00Z --model codex:gpt
+assert_eq "record: session and worker exit 0" 0 "$CODE"
+assert_eq "record: two runs written" 2 "$(jq length "$STUB_DIR/runs.json")"
+rec --since 2026-01-01T00:00:00Z --model codex:gpt
+assert_eq "record: rerun adds nothing" 2 "$(jq length "$STUB_DIR/runs.json")"
+
+echo '[]' >"$STUB_DIR/runs.json"
+rec --since 2026-01-01T00:00:00Z --end 2026-01-01T01:00:00Z
+assert_eq "record: window subtracts minutes" 60 "$(jq -r '.[0].minutes' "$STUB_DIR/runs.json")"
+assert_eq "record: window subtracts cost" 2.5 "$(jq -r '.[0].costUsd' "$STUB_DIR/runs.json")"
+assert_eq "record: window run is written" 1 "$(jq length "$STUB_DIR/runs.json")"
+
+rec
+assert_eq "record: missing --since exits 2" 2 "$CODE"
+
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; else echo "$FAILS failed"; exit 1; fi
