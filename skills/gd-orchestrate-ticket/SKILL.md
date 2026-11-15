@@ -17,8 +17,9 @@ CLI (load `orca-cli` and `orchestration` for command details), `board-ticket-cli
 
 1. **Run the gate.** `scripts/ticket-gate <KEY>` (next to this file) reads the ticket and prints
    `{ask, missing, repos}`. It runs `board-check-ready` (goal, acceptance criteria, no open questions, one component)
-   and `ticket-repos` (every component maps to exactly one repo; overrides live in
-   `~/.config/orchestrate-ticket/repos` as `component=repo-display-name` lines). Exit 0 means `ask` is false.
+   and `board-ticket-cli blockers` (no blocker ticket is unfinished), and `ticket-repos` (every component maps to
+   exactly one repo; overrides live in `~/.config/orchestrate-ticket/repos` as `component=repo-display-name` lines).
+   Exit 0 means `ask` is false.
    `board-ticket-cli view <KEY>` gives the full text for the briefs. Why: a ticket made with `gd-board-issue` is built
    so nobody is asked anything; a session once asked a confirmation on such a ticket because this step asked every
    time.
@@ -28,10 +29,16 @@ CLI (load `orca-cli` and `orchestration` for command details), `board-ticket-cli
      same turn. The ticket is the owner's decision.
    - `ask` is true: ask the owner once, as one question per gap named in `missing`. Options, your recommendation first,
      tradeoff per option (for "Repo mapping": name the repo for the unmatched component; for a missing section or open
-     question: answer it or stop). State the time estimate in the same message (a guess until the repos are read; say
-     so). After the answer, do not ask again.
-3. **Never add a question the gate did not ask for**, such as "start the worker?", "add another repo?" or "wait for the
-   other ticket?". Why: each one makes the owner answer something the ticket already decided.
+     question: answer it or stop; for "Blocker <KEY>": ask whether to resolve that blocker ticket first with this skill,
+     recommended, then come back to this ticket, or to continue anyway with the cost of building on something that does
+     not exist yet, or to stop. Resolve the blocker the same way, gate included, and never start the blocked ticket's
+     workers until the owner has answered). State the time estimate in the same message (a guess until the repos are
+     read; say so). After the answer, do not ask again.
+3. **Never add a question the gate did not ask for**, such as "start the worker?" or "add another repo?". A blocker is
+   asked about only through the gate's "Blocker <KEY>" entry. Why: each extra question makes the owner answer something
+   the ticket already decided. Why blockers are asked: BM-206 (Hermes on node 2) was built and merged while its blocker
+   BM-204 (create node 2) was still in Backlog, so the first apply created nothing to run on and the owner found the
+   missing EC2 instance first.
 4. **Write the plan.** `tickets/<KEY>/plan.md` in this repo: repos, one self-contained brief per repo, dependencies,
    and a status table (repo, worker, PR URL, state). Commit it on this worktree's task branch. Why: a new session
    resumes from the file, not from chat.
