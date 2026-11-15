@@ -67,11 +67,13 @@ CLI (load `orca-cli` and `orchestration` for command details), `board-ticket-cli
    because this step only said to list the PRs.
 
    Record the agent cost on the ticket before you report it done, with `scripts/ticket-record-stats <KEY> --since
-   <ISO time of the plan commit> --model <provider:model>`, one `--model` for each worker on another provider (Codex,
-   Gemini, OpenCode: their usage cannot be read from logs, so they are recorded with unknown numbers). When this
+   <ISO time of the plan commit> --codex-worktree <worker worktree path>`, one for each Codex worker (its Codex logs
+   give minutes and tokens per model, with each child agent it spawned, such as `codex-auto-review`, as its own
+   entry), and `--model <provider:model>` for a worker on a provider whose usage cannot be read (Gemini, OpenCode:
+   recorded with unknown numbers). Each run posts its own table to the ticket, one row per agent. When this
    session moved on to another ticket afterwards, add `--end <ISO time this ticket's work stopped>`; the cost since
    then is subtracted. It prints `recorded on <KEY>` and exits 0 only when Jira's runs list the session and every
-   model, and it is safe to run twice. A ticket without that line is not finished. Why: the owner had to ask for the
+   worker, and it is safe to run twice. A ticket without that line is not finished. Why: the owner had to ask for the
    cost of BM-204 after it was done, because nothing in this skill made the session record it.
 
 Never poll, loop on `orca orchestration check`, or run watch scripts: waiting is free only while the turn is ended.

@@ -115,7 +115,8 @@ REC="$REPO/skills/gd-orchestrate-ticket/scripts/ticket-record-stats"
 mkdir -p "$STUB_DIR/rec"
 cat >"$STUB_DIR/rec/board-run-stats" <<STUB
 #!/usr/bin/env bash
-# Prints \$STUB_DIR/stats-<since> for the --since value given.
+# Prints \$STUB_DIR/stats-<since> (or codex-stats for --provider codex) for the --since value given.
+case " \$* " in *" --provider codex "*) cat "$STUB_DIR/codex-stats"; exit 0 ;; esac
 cat "$STUB_DIR/stats-\$3"
 STUB
 cat >"$STUB_DIR/rec/board-ticket-cli" <<STUB
@@ -163,6 +164,19 @@ rec --since 2026-01-01T00:00:00Z --end 2026-01-01T01:00:00Z
 assert_eq "record: window subtracts minutes" 60 "$(jq -r '.[0].minutes' "$STUB_DIR/runs.json")"
 assert_eq "record: window subtracts cost" 2.5 "$(jq -r '.[0].costUsd' "$STUB_DIR/runs.json")"
 assert_eq "record: window run is written" 1 "$(jq length "$STUB_DIR/runs.json")"
+
+printf '%s\n' '{"provider":"codex","startedAt":"2026-01-01T00:05:00Z","minutes":12,"tokens":500,"costUsd":0,' \
+  '"models":[{"label":"codex:a"},{"label":"codex:b"}],"markdown":"x"}' | tr -d '\n' >"$STUB_DIR/codex-stats"
+echo '[]' >"$STUB_DIR/runs.json"
+rec --since 2026-01-01T00:00:00Z --codex-worktree /wt/codex
+assert_eq "record: codex worker exits 0" 0 "$CODE"
+assert_eq "record: codex worker and session written" "claude codex" \
+  "$(jq -r '[.[].provider] | sort | join(" ")' "$STUB_DIR/runs.json")"
+rec --since 2026-01-01T00:00:00Z --codex-worktree /wt/codex
+assert_eq "record: codex rerun adds nothing" 2 "$(jq length "$STUB_DIR/runs.json")"
+printf '{"provider":"codex","startedAt":null,"minutes":0,"tokens":0,"models":[]}\n' >"$STUB_DIR/codex-stats"
+rec --since 2026-01-01T00:00:00Z --codex-worktree /wt/nologs
+assert_eq "record: codex worker without logs exits 1" 1 "$CODE"
 
 rec
 assert_eq "record: missing --since exits 2" 2 "$CODE"

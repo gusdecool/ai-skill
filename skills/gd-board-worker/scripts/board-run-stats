@@ -4,6 +4,10 @@
 # Reads the session logs Claude Code keeps for that worktree (${BOARD_CLAUDE_PROJECTS:-~/.claude/projects}/<slug>/
 # *.jsonl), counts each assistant message once, and prices the tokens with model-prices.tsv in the skill folder.
 # Also reads the subagent logs (<session>/subagents/*.jsonl), so models used by Claude's own subagents are counted.
+# With --provider codex it reads the Codex CLI logs instead
+# (${BOARD_CODEX_SESSIONS:-~/.codex/sessions}/**/rollout-*.jsonl) whose working directory is <worktree-path>: the
+# worker and every child agent it spawned (for example the
+# codex-auto-review guardian) each get their own model entry, from the last token total in each log.
 # Prints one JSON object: {provider, startedAt, minutes, tokens, costUsd, models: [{model, label, input, output,
 # cacheRead, cacheWrite, costUsd, priced}], unpriced: [model], markdown}. label is provider:model (from the label
 # column of model-prices.tsv, else provider:<raw id>), safe for a Jira label.
@@ -30,29 +34,53 @@ done
 [[ -z "$since" || "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(Z|[+-][0-9:]+)$ ]] || die "invalid --since: $since"
 
 prices="$(dirname "${BASH_SOURCE[0]}")/../model-prices.tsv"
-# Claude Code names the log folder after the path with every non-alphanumeric character replaced by '-'.
-slug="$(printf '%s' "${worktree%/}" | sed -E 's/[^A-Za-z0-9]/-/g')"
-dir="${BOARD_CLAUDE_PROJECTS:-$HOME/.claude/projects}/$slug"
 
 shopt -s nullglob
-files=("$dir"/*.jsonl "$dir"/*/subagents/*.jsonl)
-if [ "${#files[@]}" -eq 0 ]; then
-  echo "board-run-stats: no session logs in $dir" >&2
-  files=()
-fi
-
 # Price table as JSON: {model: {in, out, cr, cw}}.
 price_json="$(grep -v '^#' "$prices" | jq -Rn '[inputs | split("\t") | select(length >= 5)
   | {key: .[0], value: {in: (.[1] | tonumber), out: (.[2] | tonumber), cr: (.[3] | tonumber),
                         cw: (.[4] | tonumber), label: (.[5] // "")}}] | from_entries')"
 
-# One record per assistant message (the last copy wins, streaming repeats a message), then totals per model.
+# Prints one usage record per Codex log of the worktree: a start record with zero usage and an end record with the
+# log's last token total (Codex input_tokens include the cached ones, so they are split into input and cacheRead).
+codex_records() {
+  local root="${BOARD_CODEX_SESSIONS:-$HOME/.codex/sessions}" f
+  while IFS= read -r f; do
+    jq -c -s --arg cwd "${worktree%/}" --arg id "$(basename "$f")" '
+      (map(select(.type == "turn_context")) | first // {}) as $t
+      | (map(select(.payload.type? == "token_count" and .payload.info != null)) | last
+         | .payload.info.total_token_usage // null) as $u
+      | select($t.payload.cwd == $cwd and $u != null)
+      | ($t.payload.model // "unknown") as $m
+      | ({id: ($id + "#start"), ts: .[0].timestamp, model: $m,
+          u: {input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0}},
+         {id: $id, ts: .[-1].timestamp, model: $m,
+          u: {input_tokens: (($u.input_tokens // 0) - ($u.cached_input_tokens // 0)),
+              output_tokens: ($u.output_tokens // 0),
+              cache_read_input_tokens: ($u.cached_input_tokens // 0),
+              cache_creation_input_tokens: ($u.cache_write_input_tokens // 0)}})' "$f"
+  done < <(grep -rl --include='rollout-*.jsonl' -F "\"cwd\":\"${worktree%/}\"" "$root" 2>/dev/null || true)
+}
+
 records="[]"
-if [ "${#files[@]}" -gt 0 ]; then
-  records="$(cat "${files[@]}" | jq -cR 'fromjson? | select(.type == "assistant" and .message.usage != null)
-    | {id: (.message.id // .uuid), ts: .timestamp, model: (.message.model // "unknown"), u: .message.usage}' |
-    jq -s --arg since "$since" '[.[] | select($since == "" or .ts >= $since)]
-      | group_by(.id) | map(.[-1])')"
+if [ "$provider" = codex ]; then
+  records="$(codex_records | jq -s --arg since "$since" '[.[] | select($since == "" or .ts >= $since)]')"
+else
+  # Claude Code names the log folder after the path with every non-alphanumeric character replaced by '-'.
+  slug="$(printf '%s' "${worktree%/}" | sed -E 's/[^A-Za-z0-9]/-/g')"
+  dir="${BOARD_CLAUDE_PROJECTS:-$HOME/.claude/projects}/$slug"
+  files=("$dir"/*.jsonl "$dir"/*/subagents/*.jsonl)
+  if [ "${#files[@]}" -eq 0 ]; then
+    echo "board-run-stats: no session logs in $dir" >&2
+    files=()
+  fi
+  # One record per assistant message (the last copy wins, streaming repeats a message), then totals per model.
+  if [ "${#files[@]}" -gt 0 ]; then
+    records="$(cat "${files[@]}" | jq -cR 'fromjson? | select(.type == "assistant" and .message.usage != null)
+      | {id: (.message.id // .uuid), ts: .timestamp, model: (.message.model // "unknown"), u: .message.usage}' |
+      jq -s --arg since "$since" '[.[] | select($since == "" or .ts >= $since)]
+        | group_by(.id) | map(.[-1])')"
+  fi
 fi
 
 jq -n --argjson r "$records" --argjson p "$price_json" --arg provider "$provider" '
@@ -82,7 +110,11 @@ jq -n --argjson r "$records" --argjson p "$price_json" --arg provider "$provider
       "Agent run (" + .provider + ")\n\n| Item | Value |\n|---|---|\n"
       + "| Wall time | " + (.minutes | tostring) + " min |\n"
       + "| Tokens | " + (.tokens | tostring) + " |\n"
-      + "| Estimated cost | $" + (.costUsd | tostring) + " |\n"
+      + "| Estimated cost | $" + (.costUsd | tostring)
+      + (if (.unpriced | length) > 0 then " (excludes unpriced models)" else "" end) + " |\n"
+      + (.models | map("| " + .label + " | " + ((.input + .output + .cacheRead + .cacheWrite) | tostring)
+                       + " tokens, " + (if .priced then "$" + (.costUsd | tostring) else "price unknown" end)
+                       + " |\n") | join(""))
       + "| Models | "
       + (if (.models | length) == 0 then "none" else (.models | map(.label) | join(", ")) end) + " |\n\n"
       + "Cost is an estimate: tokens times list price"
