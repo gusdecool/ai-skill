@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Records the agent cost of an orchestrated ticket in Jira: this session's minutes, tokens and cost, plus the model of
+# every worker on another provider.
+#   ticket-record-stats <KEY> --since <ISO> [--end <ISO>] [--worktree <path>] [--model <provider:model>]...
+# --since is when work on the ticket began (for example the plan commit time). --end is when it stopped, only needed
+# when the same session went on to another ticket; the cost since --end is then subtracted. Each --model is a worker
+# whose usage cannot be read from logs (Codex, Gemini, OpenCode); it is recorded with unknown numbers. Safe to run
+# twice: a session run with the same start and a model already on the ticket are skipped. Exit 0 when the ticket's
+# runs list the session and every --model afterwards, 1 when something is missing, 2 on usage errors.
+# BOARD_SCRIPTS overrides the folder of the gd-board-worker scripts (used by the tests).
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BOARD="${BOARD_SCRIPTS:-$HERE/../../gd-board-worker/scripts}"
+
+# Prints an error and exits 2.
+die() { echo "ticket-record-stats: $*" >&2; exit 2; }
+
+# Prints stats JSON $1 minus stats JSON $2 (cost of the window between their start times), with a one-line markdown.
+subtract() {
+  jq -n -c --argjson a "$1" --argjson b "$2" '
+    {provider: $a.provider, startedAt: $a.startedAt,
+     minutes: (($a.minutes - $b.minutes) * 10 | round / 10),
+     tokens: ($a.tokens - $b.tokens),
+     costUsd: (($a.costUsd - $b.costUsd) * 100 | round / 100),
+     models: [$a.models[] as $m
+       | (($b.models | map(select(.label == $m.label)) | first) // {}) as $n
+       | $m | .input -= ($n.input // 0) | .output -= ($n.output // 0)
+       | .cacheRead -= ($n.cacheRead // 0) | .cacheWrite -= ($n.cacheWrite // 0)
+       | .costUsd = ((.costUsd - ($n.costUsd // 0)) * 10000 | round / 10000)],
+     unpriced: [],
+     markdown: ("Agent run (window subtracted): \($a.provider), \(($a.minutes - $b.minutes) * 10 | round / 10) min, "
+       + "\($a.tokens - $b.tokens) tokens, USD \(($a.costUsd - $b.costUsd) * 100 | round / 100)")}'
+}
+
+# Records the session cost for ticket $1 from --since $2 and optional --end $3 in worktree $4.
+record_session() {
+  local key="$1" since="$2" end="$3" worktree="$4" stats tail
+  stats="$("$BOARD/board-run-stats" "$worktree" --since "$since")" || return 1
+  if [ -n "$end" ]; then
+    tail="$("$BOARD/board-run-stats" "$worktree" --since "$end")" || return 1
+    stats="$(subtract "$stats" "$tail")" || return 1
+  fi
+  # Skips a session already recorded with the same start time, so a rerun never counts it twice.
+  if "$BOARD/board-ticket-cli" runs "$key" | jq -e --arg s "$(jq -r .startedAt <<<"$stats")" \
+    'any(.[]; .provider == "claude" and .startedAt == $s)' >/dev/null; then
+    echo "session already recorded on $key"
+    return 0
+  fi
+  "$BOARD/board-ticket-cli" stats "$key" <<<"$stats"
+}
+
+# Parses the arguments, records the session and the workers, then checks the ticket's runs.
+main() {
+  [ "$#" -ge 1 ] ||
+    die "usage: ticket-record-stats <KEY> --since <ISO> [--end <ISO>] [--worktree <path>] [--model p:m]..."
+  local key="$1" since="" end="" worktree="" models=() m
+  shift
+  while [ "$#" -gt 0 ]; do
+    [ "$#" -ge 2 ] || die "missing value for $1"
+    case "$1" in
+      --since) since="$2" ;;
+      --end) end="$2" ;;
+      --worktree) worktree="$2" ;;
+      --model) models+=("$2") ;;
+      *) die "unknown option: $1" ;;
+    esac
+    shift 2
+  done
+  [ -n "$since" ] || die "--since is required"
+  [ -n "$worktree" ] || worktree="$(git rev-parse --show-toplevel)" || die "not in a git worktree"
+
+  local failed=0
+  record_session "$key" "$since" "$end" "$worktree" ||
+    { echo "ticket-record-stats: session stats failed" >&2; failed=1; }
+  for m in ${models[@]+"${models[@]}"}; do
+    # Skips a worker model already on the ticket.
+    if "$BOARD/board-ticket-cli" runs "$key" | jq -e --arg m "$m" 'any(.[].models[]?; .label == $m)' >/dev/null; then
+      echo "$m already recorded on $key"
+    else
+      "$BOARD/board-ticket-cli" stats "$key" --model "$m" || failed=1
+    fi
+  done
+
+  # Verifies the result from Jira, not from the commands above.
+  local runs
+  runs="$("$BOARD/board-ticket-cli" runs "$key")" || return 2
+  jq -e 'any(.[]; .provider == "claude")' >/dev/null <<<"$runs" || { echo "missing: claude session run" >&2; failed=1; }
+  for m in ${models[@]+"${models[@]}"}; do
+    jq -e --arg m "$m" 'any(.[].models[]?; .label == $m)' >/dev/null <<<"$runs" || { echo "missing: $m" >&2; failed=1; }
+  done
+  [ "$failed" -eq 0 ] && echo "recorded on $key" || return 1
+}
+
+main "$@"
