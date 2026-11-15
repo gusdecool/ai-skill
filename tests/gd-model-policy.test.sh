@@ -167,5 +167,13 @@ OUT="$(unset MODELS_FILE; bash "$RESOLVE" --provider codex --tier Mid 2>"$FIXTUR
 CODE=$?
 assert_eq "default table is relative to the script" '0 gpt-6.1-sol' "$CODE $(jq -r .launchId <<<"$OUT")"
 
+# The shipped table gives Antigravity a launch id at Low, Mid, High and Ultra, so its quota can take any tier.
+TABLE="$REPO/skills/gd-model-policy/models.md"
+for pair in 'Low gemini-3.8-flash-low' 'Mid gemini-3.8-flash-medium' 'High gemini-4-argon-medium' \
+  'Ultra gemini-4-hydrogen-xhigh'; do
+  run --provider antigravity --tier "${pair% *}" --allow-high
+  assert_eq "shipped table: antigravity ${pair% *}" "0 ${pair#* }" "$CODE $(jq -r .launchId <<<"$OUT")"
+done
+
 [ "$FAILS" -eq 0 ] && echo "All model policy tests passed"
 exit "$FAILS"

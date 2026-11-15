@@ -1,6 +1,6 @@
 # Model tiers
 
-Last checked: 2026-11-10
+Last checked: 2026-11-15
 
 One scale for every AI provider: Low, Mid, High, Ultra. Rules elsewhere speak only in tiers; this file is the only
 place that names models. A cell holds model names separated by `, ` or the word `none`.
@@ -12,7 +12,7 @@ models with no launch id.
 |---|---|---|---|---|
 | Claude | Haiku 5.5 | Sonnet 5.5 | Opus 5.5 | Fable 5.2, Mythos 5.2 |
 | Codex | Luna, Terra | Sol | none | Astra |
-| Gemini | 3.5 Flash-Lite, 3.6 Flash | 3.8 Flash | Argon | none |
+| Gemini | 3.5 Flash-Lite, 3.6 Flash, 3.8 Flash (low) | 3.8 Flash | Argon | Hydrogen |
 | DeepSeek | V4.1 Flash | V4 Pro | none | none |
 | Kimi | K2.6 | K2.7 Code, K3.1-pro, K3 | none | none |
 
@@ -55,8 +55,10 @@ rates them as Sonnet-class for the work. DeepSeek V4.1 Flash and Kimi K2.6 are L
 | Codex | Astra | `gpt-6-astra` |
 | Gemini | 3.5 Flash-Lite | none |
 | Gemini | 3.6 Flash | none |
+| Gemini | 3.8 Flash (low) | `gemini-3.8-flash-low` |
 | Gemini | 3.8 Flash | `gemini-3.8-flash-medium` |
-| Gemini | Argon | none |
+| Gemini | Argon | `gemini-4-argon-medium` |
+| Gemini | Hydrogen | `gemini-4-hydrogen-xhigh` |
 | DeepSeek | V4.1 Flash | `opencode-go/deepseek-v4.1-flash` |
 | DeepSeek | V4 Pro | `opencode-go/deepseek-v4-pro` |
 | Kimi | K2.6 | none |
@@ -68,9 +70,13 @@ The id to pass as `--model` to an agent CLI. Never pass the display name from th
 was started with `--model Sol`, Codex answered "The 'Sol' model is not supported when using Codex with a ChatGPT
 account", and the dispatch was wrongly moved to another provider. The real id is `gpt-6.1-sol`.
 
-Checked against each CLI on 2026-11-11. A cell says `none` when the CLI does not list the model.
+Checked against each CLI on 2026-11-15. A cell says `none` when the CLI does not list the model.
 Mythos 5.2 is unverified: it is not in the Claude Code docs or `claude --help`.
-Gemini 3.8 Flash also has `-low` and `-high` variants for the reasoning level.
+`agy models` (2026-11-15) lists no 3.5 Flash-Lite or 3.6 Flash, so those stay `none`. Gemini 3.8 Flash comes in
+`-low`, `-medium` and `-high` reasoning levels. The owner put the `-low` variant in Low so Low tasks can use the
+Google AI Pro quota, and the `-medium` variant in Mid. Argon has `-low`, `-medium` and `-high`; Hydrogen has `-low`,
+`-medium`, `-high` and `-xhigh`. The owner rated Hydrogen Ultra on 2026-11-15, launched at `-xhigh`; no price was
+checked, so the tier is the owner's judgment.
 
 - Read the id from the CLI's own model list, not from memory: `agy models`, `opencode models`, and for Codex the
   `slug` field of `~/.codex/models_cache.json` (take entries with `visibility: list`). When the table is stale (a
