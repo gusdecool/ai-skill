@@ -145,6 +145,21 @@ JSON
 run "$STUB_DIR/tie.json" --reserved claude
 assert_eq "a tie goes to the reserved provider" "claude" "$(jq -r .chosen <<<"$OUT")"
 
+# No worker eligible: the reserved provider takes the task while it is under 90 in every window.
+jq '.result.rateLimits.claude.weekly.usedPercent = 80
+  | .result.rateLimits.codex.session.usedPercent = 100
+  | .result.rateLimits.antigravity.weekly.usedPercent = 100
+  | .result.rateLimits.opencodeGo.weekly.usedPercent = 100' "$STUB_DIR/bm55.json" >"$STUB_DIR/fallback.json"
+run "$STUB_DIR/fallback.json" --reserved claude --tier Mid
+assert_eq "no worker eligible falls back to the reserved provider" "0 claude true claude-sonnet-5-5" \
+  "$CODE $(jq -r '[.chosen, .fallback, .model] | join(" ")' <<<"$OUT")"
+assert_eq "the table marks the fallback" "1" "$(jq -r .table <<<"$OUT" | grep -c 'chosen (fallback')"
+jq '.result.rateLimits.claude.weekly.usedPercent = 92' "$STUB_DIR/fallback.json" >"$STUB_DIR/fallback92.json"
+run "$STUB_DIR/fallback92.json" --reserved claude
+assert_eq "no fallback when the reserved provider is at 90 or more" "1 null" "$CODE $(jq -r .chosen <<<"$OUT")"
+run "$STUB_DIR/bm55.json" --reserved claude
+assert_eq "no fallback while a worker is eligible" "false" "$(jq .fallback <<<"$OUT")"
+
 # Nothing eligible exits 1 and reports the earliest reset.
 jq '.result.rateLimits |= with_entries(.value.status = "error")' "$STUB_DIR/bm55.json" >"$STUB_DIR/none.json"
 run "$STUB_DIR/none.json" --reserved claude
@@ -170,8 +185,9 @@ run "$STUB_DIR/bm55.json" --reserved claude --tier High
 assert_eq "High requires approval" "2" "$CODE"
 assert_eq "High refusal asks for the user's OK" "1" "$(grep -c "needs the user's OK" "$STUB_DIR/stderr")"
 run "$STUB_DIR/bm55.json" --reserved claude --tier High --allow-high
-assert_eq "approved High resolves its model" "1 no High model" \
-  "$CODE $(jq -r '.providers[] | select(.provider == "codex") | .reason' <<<"$OUT")"
+assert_eq "approved High resolves its model, workers have none so the reserved provider falls back" \
+  "0 no High model claude-opus-5-5" \
+  "$CODE $(jq -r '.providers[] | select(.provider == "codex") | .reason' <<<"$OUT") $(jq -r .model <<<"$OUT")"
 run "$STUB_DIR/bm55.json" --reserved claude
 assert_eq "without a tier no model is added" "false" "$(jq 'has("model")' <<<"$OUT")"
 run "$STUB_DIR/bm55.json" --reserved claude --tier bogus

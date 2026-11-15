@@ -18,3 +18,5 @@ Decided by the owner on 2026-11-15, in the AI-skill-load-balancer notes session.
 - Defaults live in the script; `~/.config/load-balancer/config.json` only overrides them. `main_cutoff` no longer
   changes the pause check (always 90).
 - `--bump` adds 5 points to session and weekly, because the score now reads the weekly window.
+- Fallback: when no worker is eligible, the orchestrator takes the task while it is under 90 in every window (owner:
+  "If no child worker is available because of their cutoff, I expect the main orchestrator to take the job").

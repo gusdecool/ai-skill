@@ -118,8 +118,11 @@ What the script does (the rules, kept here so you can read its output):
    A provider's score is its weekly urgency; session and monthly are not scored. High means much unused weekly quota
    and little time left to use it, so the weekly quota gets used up before it resets. The highest score wins. If a
    worker's session fills mid-task, the stuck-worker watch hands the task to the next provider.
-3. **Tie-break** when scores are within 5 percent: your own provider first, then the order the tool lists them.
-4. **Parallel tasks.** After each pick, run the script again with one more `--bump <that provider>` (it adds 5 points to
+3. **Fallback.** If no worker is eligible, the script chooses your own provider (`fallback: true`) while it is under 90
+   in every window, even above its 50 cutoff. Dispatch a subagent as usual. Why: the owner wants the orchestrator to
+   take the job rather than stall when every worker is at its cutoff. The pause check at 90 still stops it.
+4. **Tie-break** when scores are within 5 percent: your own provider first, then the order the tool lists them.
+5. **Parallel tasks.** After each pick, run the script again with one more `--bump <that provider>` (it adds 5 points to
    that provider's session and weekly `usedPercent`), so tasks spread out. Quotas are re-read on every run.
 
 ### Worked example (caller is Claude; quotas read 2026-10-28 02:30)
@@ -134,7 +137,8 @@ Claude is skipped because its weekly 81% is over its reserved 50% cutoff. Antigr
 lowers its score by about 6, so Codex takes tasks once enough are already picked. If the caller were Codex, the same
 rule would reserve Codex instead.
 
-If no worker provider is eligible, the tasks wait for the earliest `resetsAt`: see "Waiting for a quota reset" below.
+If no provider is eligible, including your own under 90, the tasks wait for the earliest `resetsAt`: see "Waiting for a
+quota reset" below.
 
 ## Dispatching
 

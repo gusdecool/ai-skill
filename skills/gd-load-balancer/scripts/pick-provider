@@ -17,6 +17,8 @@
 # Prints one JSON object (plus "warnings"): {reserved, providers[{provider, skipped, reason, score, freeAt, windows[...]}], chosen,
 # earliestResetsAt (only when nothing is eligible), table (markdown score table)}. Exit 0 when a provider is chosen,
 # 1 when none is eligible, 2 when quotas cannot be read or the arguments are wrong.
+# Fallback: when no provider is eligible, the reserved provider is chosen if it is under 90 in every window
+# ("fallback": true in the output); the orchestrator pause check is the only thing that stops it then.
 # Rules: skip a provider at 90 or more in any window (50 when reserved); per window
 # remaining = 100 - usedPercent, timeLeftFraction = (resetsAt - now) / (windowMinutes * 60000) with a floor of 0.05,
 # urgency = remaining / timeLeftFraction; score = the weekly window's urgency only (session and monthly only gate
@@ -150,6 +152,8 @@ result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson
      | ([$ws[] | select(.window == "weekly") | .urgency][0]) as $weekly
      | {provider: $p, windows: $ws,
         score: $weekly,
+        fallbackOk: ($p == $res and $v.status == "ok" and $weekly != null and ($excluded | index($p)) == null
+                     and $missing[$p] == null and all($ws[]; .usedPercent < 90)),
         freeAt: (if ($blocked | length) > 0 then ($blocked | map(.resetsAt) | max) else null end),
         reason: (if $orch and $p != $res then "not the orchestrator"
                  elif ($excluded | index($p)) != null then "excluded"
@@ -165,9 +169,13 @@ result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson
      | .skipped = (.reason != null)] as $ps
   | ($ps | map(select(.skipped | not))) as $ok
   | (($ok | map(.score) | max) // 0) as $top
-  | ([$ok[] | select(.score >= $top * 0.95)] | (map(select(.provider == $res)) + .)[0].provider) as $chosen
+  | ([$ok[] | select(.score >= $top * 0.95)] | (map(select(.provider == $res)) + .)[0].provider) as $scored
+  # No worker is eligible: the reserved provider takes the task while it is under 90 in every window.
+  | ($ps | map(select(.fallbackOk)) | .[0].provider) as $fallback
+  | ($scored // (if $orch then null else $fallback end)) as $chosen
+  | ($scored == null and $chosen != null) as $isFallback
   | def cell($p; $n): ([$p.windows[] | select(.window == $n) | .urgency | tostring][0] // "-");
-    {reserved: $res, providers: $ps, chosen: $chosen, warnings: $cfg.warnings}
+    {reserved: $res, providers: $ps, chosen: $chosen, fallback: $isFallback, warnings: $cfg.warnings}
     + (if $chosen != null and $models[$chosen] != null then
          {tier: $tier, agent: $models[$chosen].agent, model: $models[$chosen].launchId} else {} end)
     + (if $chosen == null then
@@ -175,7 +183,8 @@ result="$(jq -c --argjson now "$now_ms" --argjson orch "$orchestrator" --argjson
     + {table: (["| Provider | Session | Weekly | Monthly | Score | Result |", "|---|---|---|---|---|---|"]
         + [$ps[] | "| \(.provider) | \(cell(.; "session")) | \(cell(.; "weekly")) | \(cell(.; "monthly")) | "
            + "\(.score // "-") | "
-           + (if .skipped then "skipped: " + .reason elif .provider == $chosen then "chosen" else "eligible" end)
+           + (if .provider == $chosen then (if $isFallback then "chosen (fallback, no worker)" else "chosen" end)
+              elif .skipped then "skipped: " + .reason else "eligible" end)
            + " |"]
         | join("\n"))}' <<<"$accounts")" || die "cannot compute the scores"
 echo "$result"
