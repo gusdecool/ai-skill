@@ -225,6 +225,11 @@ first.
   (its bucket named "Gemini Models" is the Gemini quota), `opencodeGo` (OpenCode Go). Each has `session` and `weekly`,
   and `opencodeGo` also `monthly`, with `usedPercent`, `windowMinutes`, `resetsAt`. A provider whose `status` is not
   `ok` is unavailable; `opencodeGo` reports `missing-credentials` until its API key is set in Orca settings.
+  **Known limit:** the CLI cannot refresh quota. Orca polls on its own (about every 15 minutes, only while its window
+  has focus), and `antigravity` sometimes comes back null or in error until someone presses the refresh button in the
+  Usage panel. Do not retry in a loop and do not run `agy` yourself. Treat the provider as unavailable, and tell the
+  user "antigravity quota unreadable, press refresh in Orca". Why: no command exists to fix it; a CLI refresh is
+  requested in https://github.com/stablyai/orca/issues/25856 (drop this note when it ships).
 - **Launch:** `orca agent launch --agent <claude|codex|opencode> --worktree <selector> --prompt <text>`. Gemini runs
   through the Antigravity CLI (`agy`), but Orca's `--agent` id is `antigravity`; `agy` fails with
   `agent_unconfigured`. For orchestrated workers use `orca orchestration worker-start` with `--model` set
