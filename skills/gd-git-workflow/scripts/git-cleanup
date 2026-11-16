@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Removes branches and worktrees whose pull request is decided, so none pile up. Never asks, never loses work.
+# Usage: git-cleanup [--dry-run]     (run inside the repo or any of its worktrees; one repo per run)
+# Rules, per local branch other than the default branch:
+#   - PR merged and the branch tip is inside the PR head: remove its worktree, delete the local branch and the remote
+#     branch.
+#   - PR closed without a merge and the tip is already on the remote: remove its worktree and the local branch; the
+#     remote branch stays, so the work is kept.
+#   - PR open, no PR, tip not pushed, PR state unreadable, uncommitted changes, or it is the current worktree: keep it
+#     and say why on its line.
+# Prints one line per branch: "deleted <branch>" or "kept <branch>: <reason>". Exit 0 unless git itself fails.
+# A branch checked out in the main checkout makes that checkout switch to the default branch first (when clean).
+# Env: GH_TOKEN (for repos that need another GitHub account), ORCA_BIN (default: orca from PATH, optional).
+set -uo pipefail
+
+dry=false
+case "${1:-}" in
+  --dry-run) dry=true ;;
+  "") ;;
+  *) echo "git-cleanup: usage: git-cleanup [--dry-run]" >&2; exit 2 ;;
+esac
+
+current="$(git rev-parse --show-toplevel)" || exit 2
+main="$(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && pwd)" || exit 2
+cd "$main" || exit 2
+git fetch -q --prune || { echo "git-cleanup: fetch failed" >&2; exit 2; }
+default="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')"
+[ -n "$default" ] || { echo "git-cleanup: no origin/HEAD; run git remote set-head origin -a" >&2; exit 2; }
+orca_bin="${ORCA_BIN:-$(command -v orca || true)}"
+
+# Prints the path of the worktree that has the branch checked out, or nothing.
+worktree_of() {
+  git worktree list --porcelain |
+    awk -v ref="refs/heads/$1" '$1=="worktree"{p=substr($0,10)} $1=="branch"&&$2==ref{print p}'
+}
+
+# Removes a worktree through Orca when Orca knows it (so its list stays right), else through git.
+remove_worktree() {
+  if [ -n "$orca_bin" ] && "$orca_bin" worktree rm --worktree "path:$1" >/dev/null 2>&1; then return 0; fi
+  git worktree remove "$1"
+}
+
+# Prints "merged", "closed", "open" or "none" for the branch, or "unreadable". Merged needs the tip inside the PR head.
+pr_state() {
+  local tip="$1" json state oid seen=none
+  json="$(gh pr list --head "$2" --state all --json state,headRefOid --limit 30 2>/dev/null)" ||
+    { echo unreadable; return; }
+  while IFS=$'\t' read -r state oid; do
+    [ -n "$state" ] || continue
+    if [ "$state" = OPEN ]; then echo open; return; fi
+    if [ "$state" = MERGED ] && { [ "$tip" = "$oid" ] || git merge-base --is-ancestor "$tip" "$oid" 2>/dev/null; }; then
+      seen=merged
+    elif [ "$state" = CLOSED ] && [ "$seen" = none ]; then
+      seen=closed
+    fi
+  done < <(jq -r '.[] | [.state, .headRefOid] | @tsv' <<<"$json")
+  echo "$seen"
+}
+
+# Deletes one branch (and its worktree) when the rules allow it, and prints its result line.
+clean_branch() {
+  local b="$1" tip state wt on_remote=false
+  tip="$(git rev-parse "refs/heads/$b")"
+  state="$(pr_state "$tip" "$b")"
+  git ls-remote --exit-code --heads origin "$b" >/dev/null 2>&1 && on_remote=true
+  case "$state" in
+    open) echo "kept $b: PR still open"; return ;;
+    unreadable) echo "kept $b: PR state could not be read"; return ;;
+    none) echo "kept $b: no PR"; return ;;
+    closed)
+      if ! $on_remote || ! git merge-base --is-ancestor "$tip" "origin/$b" 2>/dev/null; then
+        echo "kept $b: PR closed but commits are not pushed"; return
+      fi ;;
+  esac
+  wt="$(worktree_of "$b")"
+  if [ -n "$wt" ]; then
+    if [ "$wt" = "$current" ] && [ "$wt" != "$main" ]; then
+      echo "kept $b: current worktree, run from the main checkout"; return
+    fi
+    if [ -n "$(git -C "$wt" status --porcelain)" ]; then
+      echo "kept $b: uncommitted changes in $wt"; return
+    fi
+    if $dry; then echo "would delete $b ($state)"; return; fi
+    if [ "$wt" = "$main" ]; then
+      git -C "$main" switch -q "$default" || { echo "kept $b: cannot switch to $default"; return; }
+    else
+      remove_worktree "$wt" || { echo "kept $b: could not remove worktree $wt"; return; }
+    fi
+  elif $dry; then echo "would delete $b ($state)"; return; fi
+  git branch -D "$b" >/dev/null || { echo "kept $b: branch delete failed"; return; }
+  if [ "$state" = merged ] && $on_remote; then
+    git push -q origin --delete "$b" || echo "warning: remote delete of $b failed"
+  fi
+  echo "deleted $b ($state)"
+}
+
+while IFS= read -r b; do
+  [ "$b" != "$default" ] || continue
+  clean_branch "$b"
+done < <(git for-each-ref refs/heads --format='%(refname:short)')
+git worktree prune

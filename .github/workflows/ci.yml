@@ -29,6 +29,10 @@ jobs:
           bash tests/gd-model-policy-claude.test.sh
       - name: Orchestrate-ticket tests
         run: bash tests/gd-orchestrate-ticket.test.sh
+      - name: Git workflow tests
+        run: |
+          shellcheck skills/gd-git-workflow/scripts/git-cleanup
+          bash tests/gd-git-workflow.test.sh
 
   model-watch:
     runs-on: ubuntu-latest

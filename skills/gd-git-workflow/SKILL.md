@@ -60,6 +60,28 @@ Rules for how to work with git, pull requests, and the optional project board. T
   `gh pr merge --delete-branch`, which also tries to switch branches in the local checkout.
 - Link a PR to its issue with `Refs #N`, never `Closes` or `Fixes`, so a merge cannot close the issue.
 
+## Push and clean up (no questions)
+
+Never ask the user whether to push or clean up; the script below decides from the PR state, so nothing waits on them.
+Why: the user wants fewer human steps, and a stale branch plus an abandoned worktree piled up in ai-skill (19 local
+branches whose remote was already gone) because nothing removed them after the merge.
+
+- Push every task branch you create as soon as it has a commit (`git push -u origin <branch>`), and before you report
+  it done check `git ls-remote --heads origin <branch>`. Why: a branch that exists only on disk is lost with the disk
+  and cannot be reviewed.
+- At the end of every session, and right after the user says a PR is merged or closed, run
+  `~/.agents/skills/gd-git-workflow/scripts/git-cleanup` from the main checkout of each repo you touched. It runs
+  `git fetch --prune`, then per local branch:
+  - PR merged: removes the worktree, deletes the local branch and the remote branch.
+  - PR closed without a merge: removes the worktree and the local branch only when everything is already on the
+    remote; the remote branch stays, so the work is kept.
+  - PR open, no PR, unpushed commits, uncommitted changes, or the current worktree: keeps it and prints why.
+  Report its output, and name each kept branch with its reason. Why: the script never deletes unmerged or unpushed
+  work, so it is safe to run without asking; `--dry-run` shows what it would do.
+- Squash merges make `git branch --merged` useless; trust the script (it asks GitHub for the PR state), not that
+  command.
+- The default branch is whatever `origin/HEAD` says (`master` in some repos), never assume `main`.
+
 ## Which tracker
 
 Decide where work is tracked before you create any issue, ticket, epic or card.

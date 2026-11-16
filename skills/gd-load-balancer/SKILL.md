@@ -250,6 +250,9 @@ first.
   asked). Before ending your turn run
   `orca orchestration worker-list --run <run_id> --terminal-state reclaimable --json` and make sure it is empty.
 - Never use `terminal close` instead of release.
+- **Clean up:** after the workers are released and their PRs are merged or closed, run
+  `~/.agents/skills/gd-git-workflow/scripts/git-cleanup` in each repo that had a worker. Do not ask the user. Why:
+  the script removes only decided, fully pushed work, and worker worktrees and branches otherwise pile up.
 
 ## Adding another tool
 
