@@ -214,7 +214,9 @@ board-ticket-cli stats <key>`. If it prints an error, ignore it and carry on; ne
 let it delay the status move. The numbers cover this session's logs only: Claude subagents are counted, workers on
 another provider or in another worktree are not. A Codex worker is read from its own logs with
 `board-run-stats <its worktree> --provider codex | board-ticket-cli stats <key>` (one entry per model, child agents
-included); a worker on a provider whose usage cannot be read is recorded by its model label only, with
+included); an Antigravity (Gemini) worker is read from its transcript with
+`board-run-stats . --provider antigravity --match <Orca task id> | board-ticket-cli stats <key>`; a worker on a
+provider whose usage cannot be read (OpenCode) is recorded by its model label only, with
 `board-ticket-cli stats <key> --model <provider:model>` (unknown minutes, tokens and cost; it reads no stdin).
 The fields add up over runs, so a ticket that is retried shows its total, and `agent.runs` keeps every run.
 

@@ -1351,6 +1351,39 @@ OUT="$(bash "$RUNSTATS" /wt/none --provider codex 2>/dev/null)"
 assert_eq "codex stats with no logs exits 0 with zeros" "0" "$(jq -r '.tokens' <<<"$OUT")"
 export BOARD_CODEX_SESSIONS="$FIX/codex-none"
 
+# Antigravity transcripts: one worker transcript (matched by its task id), one of another task.
+export BOARD_ANTIGRAVITY_BRAIN="$FIX/agy-brain"
+# Writes a fake Antigravity transcript: $1 conversation id, $2 task id in the first message, $3 input, $4 cache read,
+# $5 output.
+write_agy_log() {
+  local d="$BOARD_ANTIGRAVITY_BRAIN/$1/.system_generated/logs"
+  mkdir -p "$d"
+  {
+    printf '{"step_index":0,"type":"USER_INPUT","content":"Your task ID is: %s",' "$2"
+    printf '"created_at":"2026-11-15T01:00:00Z"}\n'
+    printf '{"step_index":1,"type":"MODEL","model":"gemini-3.8-flash-medium","input_tokens":%s,' "$3"
+    printf '"output_tokens":%s,"cache_read_tokens":%s,"created_at":"2026-11-15T01:10:00Z"}\n' "$5" "$4"
+    printf '{"step_index":2,"type":"TOOL","created_at":"2026-11-15T01:11:00Z"}\n'
+    printf '{"step_index":3,"type":"MODEL","model":"gemini-x","input_tokens":10,"output_tokens":1,'
+    printf '"cache_read_tokens":0,"created_at":"2026-11-15T01:12:00Z"}\n'
+  } >"$d/transcript_full.jsonl"
+}
+write_agy_log conv-a task_aaa 1000000 2000000 100000
+write_agy_log conv-b task_bbb 5000 0 5
+OUT="$(bash "$RUNSTATS" . --provider antigravity --match task_aaa)"
+assert_eq "antigravity stats reads tokens of the matching task only" "1000000 100000 2000000" \
+  "$(jq -r '.models[] | select(.model == "gemini-3.8-flash-medium") | "\(.input) \(.output) \(.cacheRead)"' <<<"$OUT")"
+assert_eq "antigravity stats cost is tokens times list price" "1.275" \
+  "$(jq -r '.models[] | select(.priced) | .costUsd' <<<"$OUT")"
+assert_eq "antigravity stats marks an unlisted model unpriced" "gemini-x" "$(jq -r '.unpriced | join(",")' <<<"$OUT")"
+assert_eq "antigravity stats reports the start and minutes" "2026-11-15T01:10:00Z 2" \
+  "$(jq -r '"\(.startedAt) \(.minutes)"' <<<"$OUT")"
+OUT="$(bash "$RUNSTATS" . --provider antigravity --match task_missing)"
+assert_eq "antigravity stats with no transcript exits 0 with zeros" "0" "$(jq -r '.tokens' <<<"$OUT")"
+bash "$RUNSTATS" . --provider antigravity >/dev/null 2>&1; CODE=$?
+assert_eq "antigravity stats without --match exits 2" "2" "$CODE"
+export BOARD_ANTIGRAVITY_BRAIN="$FIX/agy-none"
+
 FIELDS='[{"id":"customfield_1","name":"Agent minutes","custom":true},
   {"id":"customfield_2","name":"Agent tokens","custom":true},
   {"id":"customfield_3","name":"Agent cost USD","custom":true}]'

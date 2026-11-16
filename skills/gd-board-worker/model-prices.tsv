@@ -6,9 +6,14 @@
 # checked 2026-11-15; cache_write is the 30m write price. Context above 272K input tokens in one request is billed at
 # the Long rate, which this table does not model. codex-auto-review (the Codex guardian child agent) is not on that
 # page, so it has no row and counts 0 until OpenAI lists a price.
+# Gemini row: https://aistudio.google.com/docs/pricing, Standard tier, checked 2026-11-16. Price per 1M tokens through
+# 2026-12-31 (input 0.75, output 3.75, cached input 0.075); it doubles on 2027-01-01, update this row then. The page has
+# no separate price for the -low, -medium and -high reasoning levels. Cache storage is not modeled (cache_write is 0).
+# Antigravity runs on the Google AI Pro quota, so this is the API-equivalent value, not cash paid.
 # A model missing here is reported as unpriced and counts 0 toward the cost.
 claude-fable-5-2	8.00	40.00	0.20	10.00	claude:fable-5.2
 claude-opus-5-5	4.00	20.00	0.20	5.00	claude:opus-5.5
 claude-sonnet-5-5	2.00	10.00	0.10	2.50	claude:sonnet-5.5
 claude-haiku-5-5	0.10	0.50	0.005	0.125	claude:haiku-5.5
 gpt-6.1-sol	2.00	10.00	0.10	2.50	codex:gpt-6.1-sol
+gemini-3.8-flash-medium	0.75	3.75	0.075	0	antigravity:gemini-3.8-flash-medium

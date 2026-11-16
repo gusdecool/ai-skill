@@ -2,11 +2,13 @@
 # Records the agent cost of an orchestrated ticket in Jira: this session's minutes, tokens and cost, plus the model of
 # every worker on another provider.
 #   ticket-record-stats <KEY> --since <ISO> [--end <ISO>] [--worktree <path>] [--codex-worktree <path>]...
-#                       [--model <provider:model>]...
+#                       [--antigravity-match <text>]... [--model <provider:model>]...
 # --since is when work on the ticket began (for example the plan commit time). --end is when it stopped, only needed
 # when the same session went on to another ticket; the cost since --end is then subtracted. Each --codex-worktree is
 # the worktree of a Codex worker: its Codex logs give minutes and tokens per model, one entry for the worker and one for
-# each child agent it spawned. Each --model is a worker on a provider whose usage cannot be read (Gemini, OpenCode);
+# each child agent it spawned. Each --antigravity-match is the Orca task id (any text in the first message) of an
+# Antigravity (Gemini) worker: its transcript gives tokens and cost. Each --model is a worker on a provider whose usage
+# cannot be read (OpenCode);
 # it is recorded with unknown numbers. Safe to run twice: a run with the same provider and start, and a model already
 # on the ticket, are skipped. Exit 0 when the ticket's
 # runs list the session and every --model afterwards, 1 when something is missing, 2 on usage errors.
@@ -68,11 +70,26 @@ record_codex() {
   echo "$start"
 }
 
+# Records the Antigravity worker whose transcript contains $2 on ticket $1 from $3; prints its start time, or nothing.
+record_antigravity() {
+  local key="$1" text="$2" since="$3" stats start
+  stats="$("$BOARD/board-run-stats" . --provider antigravity --match "$text" --since "$since")" || return 1
+  start="$(jq -r '.startedAt // empty' <<<"$stats")"
+  [ -n "$start" ] || { echo "ticket-record-stats: no Antigravity transcript matches $text" >&2; return 1; }
+  if ! "$BOARD/board-ticket-cli" runs "$key" | jq -e --arg s "$start" \
+    'any(.[]; .provider == "antigravity" and .startedAt == $s)' >/dev/null; then
+    "$BOARD/board-ticket-cli" stats "$key" <<<"$stats" || return 1
+  else
+    echo "antigravity worker $text already recorded on $key" >&2
+  fi
+  echo "$start"
+}
+
 # Parses the arguments, records the session and the workers, then checks the ticket's runs.
 main() {
   [ "$#" -ge 1 ] ||
     die "usage: ticket-record-stats <KEY> --since <ISO> [--end <ISO>] [--worktree <path>] [--model p:m]..."
-  local key="$1" since="" end="" worktree="" models=() codex=() starts=() m c st
+  local key="$1" since="" end="" worktree="" models=() codex=() agy=() starts=() m c st
   shift
   while [ "$#" -gt 0 ]; do
     [ "$#" -ge 2 ] || die "missing value for $1"
@@ -82,6 +99,7 @@ main() {
       --worktree) worktree="$2" ;;
       --model) models+=("$2") ;;
       --codex-worktree) codex+=("$2") ;;
+      --antigravity-match) agy+=("$2") ;;
       *) die "unknown option: $1" ;;
     esac
     shift 2
@@ -94,6 +112,9 @@ main() {
     { echo "ticket-record-stats: session stats failed" >&2; failed=1; }
   for c in ${codex[@]+"${codex[@]}"}; do
     st="$(record_codex "$key" "$c" "$since")" && starts+=("$st") || failed=1
+  done
+  for c in ${agy[@]+"${agy[@]}"}; do
+    st="$(record_antigravity "$key" "$c" "$since")" && starts+=("agy:$st") || failed=1
   done
   for m in ${models[@]+"${models[@]}"}; do
     # Skips a worker model already on the ticket.
@@ -109,8 +130,10 @@ main() {
   runs="$("$BOARD/board-ticket-cli" runs "$key")" || return 2
   jq -e 'any(.[]; .provider == "claude")' >/dev/null <<<"$runs" || { echo "missing: claude session run" >&2; failed=1; }
   for st in ${starts[@]+"${starts[@]}"}; do
-    jq -e --arg s "$st" 'any(.[]; .provider == "codex" and .startedAt == $s)' >/dev/null <<<"$runs" ||
-      { echo "missing: codex run started $st" >&2; failed=1; }
+    local prov="codex"
+    [[ "$st" == agy:* ]] && { prov="antigravity"; st="${st#agy:}"; }
+    jq -e --arg s "$st" --arg p "$prov" 'any(.[]; .provider == $p and .startedAt == $s)' >/dev/null <<<"$runs" ||
+      { echo "missing: $prov run started $st" >&2; failed=1; }
   done
   for m in ${models[@]+"${models[@]}"}; do
     jq -e --arg m "$m" 'any(.[].models[]?; .label == $m)' >/dev/null <<<"$runs" || { echo "missing: $m" >&2; failed=1; }
