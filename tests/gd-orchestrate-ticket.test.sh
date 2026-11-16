@@ -117,6 +117,7 @@ cat >"$STUB_DIR/rec/board-run-stats" <<STUB
 #!/usr/bin/env bash
 # Prints \$STUB_DIR/stats-<since> (or codex-stats for --provider codex) for the --since value given.
 case " \$* " in *" --provider codex "*) cat "$STUB_DIR/codex-stats"; exit 0 ;; esac
+case " \$* " in *" --provider antigravity "*) cat "$STUB_DIR/agy-stats"; exit 0 ;; esac
 cat "$STUB_DIR/stats-\$3"
 STUB
 cat >"$STUB_DIR/rec/board-ticket-cli" <<STUB
@@ -177,6 +178,19 @@ assert_eq "record: codex rerun adds nothing" 2 "$(jq length "$STUB_DIR/runs.json
 printf '{"provider":"codex","startedAt":null,"minutes":0,"tokens":0,"models":[]}\n' >"$STUB_DIR/codex-stats"
 rec --since 2026-01-01T00:00:00Z --codex-worktree /wt/nologs
 assert_eq "record: codex worker without logs exits 1" 1 "$CODE"
+
+printf '%s\n' '{"provider":"antigravity","startedAt":"2026-01-01T00:07:00Z","minutes":30,"tokens":900,"costUsd":3.5,' \
+  '"models":[{"label":"antigravity:gemini"}],"markdown":"x"}' | tr -d '\n' >"$STUB_DIR/agy-stats"
+echo '[]' >"$STUB_DIR/runs.json"
+rec --since 2026-01-01T00:00:00Z --antigravity-match task_aaa
+assert_eq "record: antigravity worker exits 0" 0 "$CODE"
+assert_eq "record: antigravity worker and session written" "antigravity claude" \
+  "$(jq -r '[.[].provider] | sort | join(" ")' "$STUB_DIR/runs.json")"
+rec --since 2026-01-01T00:00:00Z --antigravity-match task_aaa
+assert_eq "record: antigravity rerun adds nothing" 2 "$(jq length "$STUB_DIR/runs.json")"
+printf '{"provider":"antigravity","startedAt":null,"minutes":0,"tokens":0,"models":[]}\n' >"$STUB_DIR/agy-stats"
+rec --since 2026-01-01T00:00:00Z --antigravity-match task_none
+assert_eq "record: antigravity worker without a transcript exits 1" 1 "$CODE"
 
 rec
 assert_eq "record: missing --since exits 2" 2 "$CODE"

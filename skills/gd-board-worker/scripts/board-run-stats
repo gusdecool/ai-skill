@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Summarizes what one Claude Code worker session cost: wall minutes, tokens and an estimated dollar cost.
-# Usage: board-run-stats <worktree-path> [--since <ISO time>] [--provider <name>]
+# Usage: board-run-stats <worktree-path> [--since <ISO time>] [--provider <name>] [--match <text>]
 # Reads the session logs Claude Code keeps for that worktree (${BOARD_CLAUDE_PROJECTS:-~/.claude/projects}/<slug>/
 # *.jsonl), counts each assistant message once, and prices the tokens with model-prices.tsv in the skill folder.
 # Also reads the subagent logs (<session>/subagents/*.jsonl), so models used by Claude's own subagents are counted.
@@ -8,6 +8,9 @@
 # (${BOARD_CODEX_SESSIONS:-~/.codex/sessions}/**/rollout-*.jsonl) whose working directory is <worktree-path>: the
 # worker and every child agent it spawned (for example the
 # codex-auto-review guardian) each get their own model entry, from the last token total in each log.
+# With --provider antigravity --match <text> it reads the Antigravity CLI transcripts
+# (${BOARD_ANTIGRAVITY_BRAIN:-~/.gemini/antigravity-cli/brain}/*/.system_generated/logs/transcript_full.jsonl) whose
+# first user message contains <text> (the Orca task id of the worker): the transcript has no working directory.
 # Prints one JSON object: {provider, startedAt, minutes, tokens, costUsd, models: [{model, label, input, output,
 # cacheRead, cacheWrite, costUsd, priced}], unpriced: [model], markdown}. label is provider:model (from the label
 # column of model-prices.tsv, else provider:<raw id>), safe for a Jira label.
@@ -18,15 +21,17 @@ set -euo pipefail
 # Prints an error and exits 2.
 die() { echo "board-run-stats: $*" >&2; exit 2; }
 
-[ "$#" -ge 1 ] || die "usage: board-run-stats <worktree-path> [--since <ISO time>] [--provider <name>]"
+USAGE="usage: board-run-stats <worktree-path> [--since <ISO time>] [--provider <name>] [--match <text>]"
+[ "$#" -ge 1 ] || die "$USAGE"
 worktree="$1"
 shift
-since="" provider="claude"
+since="" provider="claude" match=""
 while [ "$#" -gt 0 ]; do
-  [ "$#" -ge 2 ] || die "usage: board-run-stats <worktree-path> [--since <ISO time>] [--provider <name>]"
+  [ "$#" -ge 2 ] || die "$USAGE"
   case "$1" in
     --since) since="$2" ;;
     --provider) provider="$2" ;;
+    --match) match="$2" ;;
     *) die "unknown option: $1" ;;
   esac
   shift 2
@@ -62,8 +67,24 @@ codex_records() {
   done < <(grep -rl --include='rollout-*.jsonl' -F "\"cwd\":\"${worktree%/}\"" "$root" 2>/dev/null || true)
 }
 
+# Prints one usage record per model step of each Antigravity transcript whose first user message contains $match.
+antigravity_records() {
+  local root="${BOARD_ANTIGRAVITY_BRAIN:-$HOME/.gemini/antigravity-cli/brain}" f
+  [ -n "$match" ] || die "--provider antigravity needs --match <text>"
+  for f in "$root"/*/.system_generated/logs/transcript_full.jsonl; do
+    jq -c -s --arg m "$match" --arg id "$(basename "$(dirname "$(dirname "$(dirname "$f")")")")" '
+      select((map(select(.type == "USER_INPUT")) | first.content // "") | contains($m))
+      | .[] | select(.model != null)
+      | {id: ($id + "#" + (.step_index | tostring)), ts: .created_at, model: .model,
+         u: {input_tokens: (.input_tokens // 0), output_tokens: (.output_tokens // 0),
+             cache_read_input_tokens: (.cache_read_tokens // 0), cache_creation_input_tokens: 0}}' "$f"
+  done
+}
+
 records="[]"
-if [ "$provider" = codex ]; then
+if [ "$provider" = antigravity ]; then
+  records="$(antigravity_records | jq -s --arg since "$since" '[.[] | select($since == "" or .ts >= $since)]')"
+elif [ "$provider" = codex ]; then
   records="$(codex_records | jq -s --arg since "$since" '[.[] | select($since == "" or .ts >= $since)]')"
 else
   # Claude Code names the log folder after the path with every non-alphanumeric character replaced by '-'.

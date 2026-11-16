@@ -147,9 +147,10 @@ quota reset" below.
 - When the task is a board ticket (key like BM-123), record each worker on another provider once it settles:
   `board-ticket-cli stats <key> --model <provider:model>`, with the provider and model you launched. A Codex worker
   is the exception: record it with `board-run-stats <its worktree> --provider codex`, which reads its Codex logs
-  (tokens and minutes per model, child agents included); `gd-orchestrate-ticket`'s `ticket-record-stats` does it.
-  Why: Gemini and OpenCode logs are not read, so `--model` is the only way "Agent models" and `agent.runs` show
-  which models did the work there. Skip it for a task that is not a ticket.
+  (tokens and minutes per model, child agents included); `gd-orchestrate-ticket`'s `ticket-record-stats` does it. An
+  Antigravity (Gemini) worker is read from its transcript with `--provider antigravity --match <Orca task id>`.
+  Why: OpenCode logs are not read, so `--model` is the only way "Agent models" and `agent.runs` show
+  which models did the work there; Gemini was recorded the same way until BM-168 showed 34M tokens missing. Skip it for a task that is not a ticket.
 - A worker that errors in its first seconds with a "model not supported" or "unknown model" message is a launch error,
   not a provider limit. Fix the id in `gd-model-policy/models.md`, rerun `pick-provider --tier`, and restart
   on the same provider; do not switch providers. Why: in BM-56 switching hid a typo and moved the work to a provider
