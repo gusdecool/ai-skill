@@ -4,7 +4,7 @@ description: Use when the user wants to create or groom a Jira ticket for the bo
 license: MIT
 metadata:
   author: gusdecool
-  version: "1.0"
+  version: "1.1"
 ---
 
 # Board issue
@@ -15,6 +15,32 @@ and need the config from `gd-board-worker` (`~/.config/board-worker/config` and 
 `~/.config/board-worker/jira`; if missing, tell the user to run `board-setup`). Never print the Jira token.
 
 Never use this skill in a session whose prompt starts with `BOARD-WORKER`: a worker must not write its own approval.
+
+## Child tickets
+
+"Child ticket", "child" or "under X" means a real Jira parent/child, never a Task plus a comment list or a link. Read
+the parent's issue type first (`board-ticket-cli view <parent>`), then pick the child type:
+
+| Parent type | Child type | How |
+|---|---|---|
+| Epic | Story, Task or Bug | `fields.parent.key` = the epic |
+| Story, Task or Bug | Sub-task (id 10068) | `fields.parent.key` = the parent |
+| Sub-task | none | Jira has no level below a Sub-task; ask the user |
+
+- `board-ticket-cli create` has no parent option. Create children with `jira_api POST /rest/api/3/issue` from
+  `board-lib.sh` (run it under `bash`, not zsh: the loader uses `BASH_REMATCH`) and set `fields.parent.key`.
+- A Sub-task cannot sit directly under an Epic. If a child of an Epic needs its own steps, make the child a Story or
+  Task, then make the steps Sub-tasks of that child.
+- After creating, read each child back and check `fields.parent.key`. Report any child without it.
+- To turn existing Tasks into Sub-tasks, use the bulk move API, not an issue edit:
+  `POST /rest/api/3/bulk/issues/move` with the mapping key `BM,10068,<PARENT-KEY>` (project key, Sub-task type id,
+  parent) and `issueIdsOrKeys`. Poll `GET /rest/api/3/bulk/queue/<taskId>` until `COMPLETE`. Keys, status and links
+  are kept. Without the parent in the key, Jira answers 400.
+- If it is unclear whether the user means an Epic's children or a Story's steps, ask once with those two options.
+
+Why: BM-216 (a Story) got seven Tasks and a comment saying "Child tickets: ...". The owner meant Sub-tasks. Jira does
+not show a comment list as children, and a Task cannot have a Story as its parent, so the seven had to be moved by
+hand. The Epic row follows Jira's documented hierarchy; it was not run against project BM when this rule was written.
 
 ## Steps
 
