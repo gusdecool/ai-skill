@@ -82,6 +82,10 @@ CLI (load `orca-cli` and `orchestration` for command details), `board-ticket-cli
    worker, and it is safe to run twice. A ticket without that line is not finished. Why: the owner had to ask for the
    cost of BM-204 after it was done, because nothing in this skill made the session record it.
 
+When a worker's PR is merged or closed, run `~/.agents/skills/gd-git-workflow/scripts/git-cleanup` in that worker's
+repo, and again in this repo at the end. Do not ask the user. Why: worker worktrees and branches otherwise pile up
+after the merge; the script keeps anything unmerged, unpushed or uncommitted and prints why.
+
 Never poll, loop on `orca orchestration check`, or run watch scripts: waiting is free only while the turn is ended.
 Why: a session that stays alive spends tokens; Orca wakes an ended one.
 
