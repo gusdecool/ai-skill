@@ -1,6 +1,6 @@
 # Model tiers
 
-Last checked: 2026-11-15
+Last checked: 2026-11-16
 
 One scale for every AI provider: Low, Mid, High, Ultra. Rules elsewhere speak only in tiers; this file is the only
 place that names models. A cell holds model names separated by `, ` or the word `none`.
@@ -12,7 +12,7 @@ models with no launch id.
 |---|---|---|---|---|
 | Claude | Haiku 5.5 | Sonnet 5.5 | Opus 5.5 | Fable 5.2, Mythos 5.2 |
 | Codex | Luna, Terra | Sol | none | Astra |
-| Gemini | 3.5 Flash-Lite, 3.6 Flash, 3.8 Flash (low) | 3.8 Flash | Argon | Hydrogen |
+| Gemini | 3.5 Flash-Lite, 3.6 Flash, 3.8 Flash (low) | 3.8 Flash, 4 Carbon (proposed) | Argon | Hydrogen |
 | DeepSeek | V4.1 Flash | V4 Pro | none | none |
 | Kimi | K2.6 | K2.7 Code, K3.1-pro, K3 | none | none |
 
