@@ -13,6 +13,6 @@ Spec: `docs/superpowers/specs/2026-11-16-git-cleanup-design.md`
 - [x] Call the script from `gd-orchestrate-ticket` and `gd-load-balancer`.
 
 ### Task 3: ship
-- [ ] Open the PR, watch CI, check merge state.
-- [ ] After the user merges: `npx skills update -g`, then run `git-cleanup` in ai-skill and agent-standards.
-- [ ] agent-standards PR with the one-line rule.
+- [x] Open the PR, watch CI, check merge state.
+- [x] After the user merges: `npx skills update -g`, then run `git-cleanup` in ai-skill and agent-standards.
+- [x] agent-standards PR with the one-line rule.
