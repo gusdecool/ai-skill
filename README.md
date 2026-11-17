@@ -11,6 +11,7 @@ that read the shared skills folder.
 | `gd-authoring-skills` | Change a skill by PR in its repo, install | [SKILL.md][gd-authoring-skills] |
 | `gd-board-issue` | Write a board-ready issue (final spec, Auto merge) | [SKILL.md][gd-board-issue] |
 | `gd-board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][gd-board-worker] |
+| `gd-dashboard-design` | Mockup-first dashboard design, metric audit, % scaling | [SKILL.md][gd-dashboard-design] |
 | `gd-git-workflow` | Git rules: branches, commits, PRs, CI, project board | [SKILL.md][gd-git-workflow] |
 | `gd-infra-conventions` | IaC, CI pinning, migrations, deploy logs | [SKILL.md][gd-infra-conventions] |
 | `gd-load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][gd-load-balancer] |
@@ -27,6 +28,7 @@ the same in every agent. A Claude Code plugin adds its own prefix (see Install).
 [gd-authoring-skills]: skills/gd-authoring-skills/SKILL.md
 [gd-board-issue]: skills/gd-board-issue/SKILL.md
 [gd-board-worker]: skills/gd-board-worker/SKILL.md
+[gd-dashboard-design]: skills/gd-dashboard-design/SKILL.md
 [gd-git-workflow]: skills/gd-git-workflow/SKILL.md
 [gd-infra-conventions]: skills/gd-infra-conventions/SKILL.md
 [gd-load-balancer]: skills/gd-load-balancer/SKILL.md
