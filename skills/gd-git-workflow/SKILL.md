@@ -1,6 +1,6 @@
 ---
 name: gd-git-workflow
-description: Use when committing, branching, creating or removing a worktree, pushing, opening or merging a pull request, watching CI, or touching an issue, ticket, epic or project board card. Covers task branches, commit message rules, never merging without the user's word in the conversation, and project-board steps driven by a local config file.
+description: Use when committing, branching, creating or removing a worktree, pushing, opening or merging a pull request, a stacked pull request, watching CI, or touching an issue, ticket, epic or project board card. Covers task branches, commit message rules, never merging without the user's word in the conversation, and project-board steps driven by a local config file.
 license: MIT
 metadata:
   author: gusdecool
@@ -59,6 +59,28 @@ Rules for how to work with git, pull requests, and the optional project board. T
   `git ls-remote --heads origin <branch>`. In a worktree, delete only the remote branch; do not use
   `gh pr merge --delete-branch`, which also tries to switch branches in the local checkout.
 - Link a PR to its issue with `Refs #N`, never `Closes` or `Fixes`, so a merge cannot close the issue.
+
+## Stacked pull requests
+
+"Stacked PRs" means GitHub's own stack feature, made with the `gh stack` extension. A stack is an ordered chain of
+branches, each with one PR based on the branch below it, and GitHub shows the chain as one stack page and merges it
+as one. Chaining base branches by hand does not make a stack: GitHub does not know the PRs belong together.
+Why: a session chained the bases of three PRs by hand, the owner expected a GitHub stack, and it was a repeat complaint.
+
+- Setup: `gh extension install github/gh-stack` (needs a recent `gh` and an authenticated one). With more than one
+  remote, pass `--remote <name>` or set `git config remote.pushDefault origin`.
+- Start a stack before writing the code, one concern per layer, foundation at the bottom: `gh stack init <branch>...`,
+  commit on each layer, `gh stack add <branch>` for the next, `gh stack push`, then `gh stack submit --auto`.
+- PRs that already exist with chained bases: `gh stack link <pr> <pr> <pr>`, listed bottom to top. It reports
+  "already up to date" when they are linked.
+- Always use the non-interactive form (`--json`, `--auto`, `--yes`, named branches). Bare `gh stack view`,
+  `submit`, `init`, `add` and `checkout` open a prompt or a full-screen view and block an agent forever.
+- Check with `gh stack view --json`, and give the owner each PR's full URL in bottom-to-top order.
+- A stack is merged with `gh stack merge`, never `gh pr merge`, and the merge rule above still holds: only when the
+  owner says so in this conversation.
+- When a brief for a worker says "stacked", it must say to use `gh stack`, and name the order of the layers.
+- GitHub ships its own agent skill for this: `gh skill install github/gh-stack`. Read it for rebase, sync and edit
+  commands; this section only sets when and how we use it.
 
 ## Push and clean up (no questions)
 
