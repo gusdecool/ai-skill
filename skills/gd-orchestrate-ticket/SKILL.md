@@ -94,3 +94,15 @@ Why: a session that stays alive spends tokens; Orca wakes an ended one.
 Every brief is self-contained and states: repo and ticket key; the change wanted; the files the worker may edit; the
 evidence of done (tests and lint commands of that repo); "work on a task branch `<KEY>-short-description`, open a PR,
 never merge"; "set the worktree comment at each checkpoint"; and for a dependent repo, the upstream branch or PR.
+
+### Workers without network (Codex) and the GitHub account
+
+- A Codex worker runs in a sandbox with no network, by the owner's choice (safer). It cannot `git push`, and `gh`
+  reports both accounts as "token invalid" because it cannot reach GitHub. So the brief for a Codex worker says:
+  "commit locally, tick the plan boxes, do not push and do not open the PR, report `worker_done`". The coordinator
+  then pushes the branch, opens the PR and checks it. Why: BM-235's logging worker finished the code but could not
+  push, and the owner chose to keep the sandbox closed rather than open the network.
+- Every brief names the GitHub account: the default `gusdecool` for `bungamata/*` and other personal repos,
+  `gusdecool-post` only for `Post-Investment-Group` repos. Why: a worker applied the Post-Investment-Group rule to
+  `bungamata/invest` and got "Could not resolve to a Repository".
+- A stacked PR set is built with `gh stack` (see `gd-git-workflow`); the brief says so.
