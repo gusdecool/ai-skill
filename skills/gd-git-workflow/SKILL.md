@@ -22,6 +22,12 @@ Rules for how to work with git, pull requests, and the optional project board. T
 - Parallel workers share the session's worktree and get disjoint files (plan the split by the files each task
   touches). Use an extra worktree only when two workers must edit the same files at once (rare): one per worker,
   created through the `orca-cli` skill, not plain git, and merged afterwards.
+- Every extra worktree, for any repo, is made with `orca worktree create` (`orca-cli` skill), never `git worktree add`.
+  Run it from the parent worktree, or pass `--parent-worktree id:<repoId>::<path>`: `--parent-worktree active` follows
+  the shell's current directory, so from any other directory it records no parent and still succeeds. Right after
+  creating, run `orca worktree ps --json` and check the new row has a `parent`; if it is empty, run
+  `orca worktree set --worktree <id> --parent-worktree <parent id>`. Why: in BM-18 an agent made one worktree with plain
+  git, then created an Orca one from the wrong directory, and the owner saw 1 child in Orca instead of 3.
 - Never delete, or ask the user to delete, a worktree that holds uncommitted work. Commit it or list what is
   uncommitted first.
 - Branch names: use the ticket number when there is one, as `<ticket>-short-description` (the same number as the
