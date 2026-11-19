@@ -20,6 +20,7 @@ that read the shared skills folder.
 | `gd-mysql-branch` | MySQL branching: one database per git branch | [SKILL.md][gd-mysql-branch] |
 | `gd-project-standards` | Sync stack rules into repo AGENTS.md | [SKILL.md][gd-project-standards] |
 | `gd-rest-api-design` | REST URL, contract, error rules; design first | [SKILL.md][gd-rest-api-design] |
+| `gd-tech-stack` | Owner-defined language and tool preferences | [SKILL.md][gd-tech-stack] |
 
 Every agent calls a skill by its name, for example `gd-mysql-branch`. Installed with `npx skills add`, the name is
 the same in every agent. A Claude Code plugin adds its own prefix (see Install).
@@ -37,6 +38,7 @@ the same in every agent. A Claude Code plugin adds its own prefix (see Install).
 [gd-mysql-branch]: skills/gd-mysql-branch/SKILL.md
 [gd-project-standards]: skills/gd-project-standards/SKILL.md
 [gd-rest-api-design]: skills/gd-rest-api-design/SKILL.md
+[gd-tech-stack]: skills/gd-tech-stack/SKILL.md
 
 ## Config files
 
