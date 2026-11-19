@@ -66,6 +66,24 @@ Rules for how to work with git, pull requests, and the optional project board. T
   `gh pr merge --delete-branch`, which also tries to switch branches in the local checkout.
 - Link a PR to its issue with `Refs #N`, never `Closes` or `Fixes`, so a merge cannot close the issue.
 
+## Sync down (main into preview)
+
+When the user says "sync down" (merge a higher branch such as `main` into a lower one such as `preview`), try the
+direct way first. Open a PR only when the direct way fails.
+
+1. Direct: `git fetch`, check out the target branch (`preview`), merge the source (`origin/main`) with a merge
+   commit (never a squash, never a rebase), and push the target branch. Run the repo's checks first when they are
+   cheap.
+2. Only if the push is refused (branch protection, required PR or checks): cut a branch from the source branch
+   (`sync/main-into-preview`) and open a PR that targets the target branch. Follow the repo's PR rules (draft,
+   base) as usual.
+3. If the merge has file conflicts, resolve them keeping both sides' intent. If CI fails on the sync, fix the cause
+   and push. Do not stop at a conflict or a red check and hand it back.
+
+Why: a sync PR was opened for a small, conflict-free change; the owner closed it and said "we can do direct sync
+down now since there is no file conflicts anymore". A PR for a clean sync only adds a review step the owner does
+not want.
+
 ## Stacked pull requests
 
 "Stacked PRs" means GitHub's own stack feature, made with the `gh stack` extension. A stack is an ordered chain of
