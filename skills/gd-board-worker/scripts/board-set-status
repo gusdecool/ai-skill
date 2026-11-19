@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Moves a Jira ticket to a board status by posting the workflow transition that leads to it.
-# Usage: board-set-status <ticket-key-or-browse-url> <status>   (Backlog, HITL, Todo, "In progress", QA or Done)
+# Usage: board-set-status <ticket-key-or-browse-url> <status>   (Backlog, HITL, Todo, "In progress", QA, Done or Cancelled)
 # Exits 0 on success, 2 on a bad status, a bad ticket, no matching transition or any Jira failure.
 set -euo pipefail
 
@@ -14,7 +14,7 @@ arg="$1"
 status="$2"
 # Rejects anything but the six board statuses before any network call.
 case "$status" in
-  Backlog | HITL | Todo | "In progress" | QA | Done) ;;
+  Backlog | HITL | Todo | "In progress" | QA | Done | Cancelled) ;;
   *) die "unknown status '$status'" ;;
 esac
 

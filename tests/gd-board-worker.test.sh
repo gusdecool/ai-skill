@@ -555,6 +555,11 @@ assert_eq "set-status prints one line for an unknown status" "board-set-status: 
   "$(cat "$STUB_DIR/err")"
 assert_eq "set-status never calls curl on an unknown status" "no" \
   "$([ -e "$STUB_DIR/curl-argv" ] && echo yes || echo no)"
+reset_curl "200|{\"transitions\":[{\"id\":\"4\",\"name\":\"Cancelled\",\"to\":{\"name\":\"Cancelled\"}}]}" '204|'
+bash "$SETSTATUS" BM-1 Cancelled 2>/dev/null
+assert_eq "set-status accepts Cancelled" "0" "$?"
+assert_eq "set-status posts the Cancelled transition id" '{"transition":{"id":"4"}}' \
+  "$(jq -c . "$STUB_DIR/curl-body")"
 bash "$SETSTATUS" BM-1 "done" 2>/dev/null
 assert_eq "set-status status match is case-sensitive" "2" "$?"
 bash "$SETSTATUS" not-a-key Done 2>/dev/null

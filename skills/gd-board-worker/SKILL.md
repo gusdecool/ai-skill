@@ -70,7 +70,7 @@ Done status, secrets or any other repo. Never move a ticket to Done: only the hu
   holds; exit 1 means the merge is blocked for the listed reasons; exit 2 means something could not be read (treat
   as blocked).
 - `~/.agents/skills/gd-board-worker/scripts/board-set-status <ticket-key> <status>`: moves the ticket. Status is one of
-  Backlog, HITL, Todo, In progress, QA, Done.
+  Backlog, HITL, Todo, In progress, QA, Done, Cancelled (only when the user says to cancel a ticket).
 - `~/.agents/skills/gd-board-worker/scripts/board-ticket-cli`: the only Jira tool you have. `view <key>` (JSON with
   summary, status, labels, description, humanSetup, url), `status <key>`, `comment <key> <text>`,
   `label <key> add|remove <LABEL>`. Use only these four subcommands.
