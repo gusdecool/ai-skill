@@ -146,6 +146,11 @@ quota reset" below.
 
 ## Dispatching
 
+- Start the stuck-worker watch (see "Watching for stuck workers") in the same step as every launch: run it in the
+  background right after `worker-start`, naming the new dispatch, and never leave a dispatch unwatched. Why: a worker
+  hung 39 minutes on a command that never returned while Orca still showed it as in progress, and nothing was watching.
+- Tell every worker never to run `npx` or `npm exec`; it must call the tool from `node_modules/.bin` or the repo's
+  `pnpm run` script. Why: `npx` fetches a missing package and can wait forever with no output.
 - Give the worker the plan file written or approved in this session (steps are `- [ ]` boxes) so the next provider can continue from the first
   unticked box. Tell it to tick boxes in the same commit as the work.
 - When the task is a board ticket (key like BM-123), record each worker on another provider once it settles:
