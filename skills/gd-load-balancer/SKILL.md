@@ -27,6 +27,10 @@ implementation tasks are spread to workers on whichever provider has the most qu
    If none is found, **stop and tell the user**: you cannot read quotas or launch another provider, so do not
    switch. If a limit is hit, say so and wait.
 3. **Your own provider** (the one you run on) is the *reserved* provider; the cutoffs below treat it differently.
+4. **Estimate.** Before the first dispatch, tell the user the total wall-clock estimate for the whole plan, with one
+   line per task or wave, and name the steps that wait on the user. Load `gd-long-task-communication` for the format.
+   Why: dispatching workers starts a long run, and a run with no stated estimate looks the same as a stalled one; a
+   ten-task plan was dispatched with none and the user complained.
 
 ## Tool contract
 
