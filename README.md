@@ -9,6 +9,7 @@ that read the shared skills folder.
 |---|---|---|
 | `gd-orchestrate-ticket` | Orchestrate a ticket across repos with Orca workers | [SKILL.md][gd-orchestrate-ticket] |
 | `gd-authoring-skills` | Change a skill by PR in its repo, install | [SKILL.md][gd-authoring-skills] |
+| `gd-auth-otp` | Email one-time-code sign-in: codes, input, session, SES send | [SKILL.md][gd-auth-otp] |
 | `gd-board-issue` | Write a board-ready issue (final spec, Auto merge) | [SKILL.md][gd-board-issue] |
 | `gd-board-worker` | Work a board ticket: PR, CI, merge, UAT, card to QA | [SKILL.md][gd-board-worker] |
 | `gd-dashboard-design` | Mockup-first dashboard design, metric audit, % scaling | [SKILL.md][gd-dashboard-design] |
@@ -26,6 +27,7 @@ the same in every agent. A Claude Code plugin adds its own prefix (see Install).
 
 [gd-orchestrate-ticket]: skills/gd-orchestrate-ticket/SKILL.md
 [gd-authoring-skills]: skills/gd-authoring-skills/SKILL.md
+[gd-auth-otp]: skills/gd-auth-otp/SKILL.md
 [gd-board-issue]: skills/gd-board-issue/SKILL.md
 [gd-board-worker]: skills/gd-board-worker/SKILL.md
 [gd-dashboard-design]: skills/gd-dashboard-design/SKILL.md
