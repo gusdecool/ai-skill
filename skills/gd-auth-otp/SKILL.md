@@ -104,12 +104,21 @@ What went wrong, each one a rule below:
 - **Code alone on its own line** in the text part, and large monospace in the HTML part, with "It works once and
   expires in 10 minutes" and "If you did not ask for this, ignore this email." Why: copy-code and autofill features
   read a line that holds only the code.
+- **Style the HTML part with the app's own design,** not a bare default. Take the page colour, ink colour, accent and
+  fonts from the app's design file, use inline CSS (mail clients drop most `<style>` blocks) and web-safe font
+  fallbacks, put the code in a large monospace block on the surface colour, and keep the text part as the plain
+  fallback. Do not add images, a logo that was not supplied, or marketing copy. Why: an email that looks like the app
+  is recognised as the app's, and a plain page with the code on its own line was the one thing testers found easy to
+  copy.
 - **Generic subject** such as "Your sign-in code". Why: subjects show on lock screens and in notifications, so the
   code belongs only in the body.
 - **Schema.org JSON-LD (best effort, unverified).** Gmail's copy-code display honors markup only from senders Google
   registers and only for its documented types. No documented type for one-time codes was found. Add the markup only
   when you have verified the type, and say in the PR that it is unverified.
   Why: a hand-made block that Gmail ignores costs review time and gives false confidence.
+  In the one real test, the markup changed nothing: Gmail's "Copy code" button is its own detection in the Gmail
+  mobile apps, not on the web, and no sender-side switch for it was found. Test it in the mobile app before promising
+  it, and do not treat its absence on the web as a bug.
 - **Log every successful send:** the SES message id, the request id and the route. Never the code, the body or the
   address. Why: the message id is the only proof in the logs that SES accepted the mail.
 - **On a failed send, log at error level** with the error text, its type, the request id and the route, then still
