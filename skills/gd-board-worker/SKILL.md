@@ -220,6 +220,11 @@ provider whose usage cannot be read (OpenCode) is recorded by its model label on
 `board-ticket-cli stats <key> --model <provider:model>` (unknown minutes, tokens and cost; it reads no stdin).
 The fields add up over runs, so a ticket that is retried shows its total, and `agent.runs` keeps every run.
 
+A worker that is started from a hand-written spec, for example an automation prompt that does not load this skill,
+only knows what the spec says. Copy this step into that spec as its own numbered rule, with the worktree path, the ISO
+start time and the ticket key already filled in, and add the provider variants above. Why: an automation's worker spec
+had no stats step, so its tickets finished with no Agent minutes, tokens, USD or models recorded.
+
 ## Stopping
 
 Stop when: the spec is not ready, a question only the user can answer, 3 failed CI rounds, the merge is blocked by
