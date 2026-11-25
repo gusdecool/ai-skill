@@ -58,6 +58,10 @@ if [ -z "$model" ] && [ -n "$agent" ]; then
   if [ -n "$cwd" ] && [ -f "$cwd/.claude/agents/$agent.md" ]; then
     definition="$cwd/.claude/agents/$agent.md"
   fi
+  # The built-in web-fetch agent only reads pages and has no definition file; a user or project definition still wins.
+  if [ "$agent" = web-fetch ] && [ ! -f "$definition" ]; then
+    exit 0
+  fi
   if [ -f "$definition" ]; then
     model="$(awk '
       NR == 1 { if ($0 != "---") exit; next }

@@ -54,7 +54,9 @@ model. Why: an expensive session must not silently make every subagent expensive
   `sonnet` (Mid). Use `sdd-implementer` for Low, `sdd-implementer-sonnet` for Mid and `sdd-task-reviewer` for Mid
   reviews. `sdd-final-reviewer` requires High approval under the tier rules. Install the agents and hook with
   `scripts/install-claude-adapter`. The hook refuses an unpinned dispatch and asks for approval for other model
-  values or a fork. Why: the hook prevents silent inheritance and gates expensive dispatches.
+  values or a fork. The built-in `web-fetch` agent (page reads only) passes without a pin unless you define your
+  own `web-fetch` agent. Why: the hook prevents silent inheritance and gates expensive dispatches; `web-fetch` has no
+  definition file to pin, so it was refused on every page read.
 - Other tools: use their own subagent or model setting. Get the model from
   `scripts/resolve-model --provider <provider> --tier <tier>`; its `launchId` is the launch value. If the tool has no
   subagents, work inline when the session already runs the right tier. Why: each tool has its own way to pin a model.

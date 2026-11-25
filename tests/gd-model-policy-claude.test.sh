@@ -97,6 +97,10 @@ CLAUDE_AGENTS_DIR="$SKILL/adapters/claude/agents" hook 'shipped final reviewer' 
   "$(payload sdd-final-reviewer '')" ask
 CLAUDE_AGENTS_DIR="$SKILL/adapters/claude/agents" hook 'explicit overrides low definition' \
   "$(payload sdd-implementer opus)" ask
+hook 'built-in web-fetch without definition allowed' "$(payload web-fetch '')" allow
+pin "$CLAUDE_AGENTS_DIR/web-fetch.md" opus
+hook 'user web-fetch definition still gated' "$(payload web-fetch '')" ask
+rm "$CLAUDE_AGENTS_DIR/web-fetch.md"
 hook 'fork always asks' "$(payload fork sonnet)" ask
 pin "$TMP/project/.claude/agents/x.md" sonnet
 pin "$CLAUDE_AGENTS_DIR/x.md" opus
