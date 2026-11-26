@@ -74,6 +74,34 @@ test("login signs in with PKCE, resource, state and a loopback redirect, then th
   assert.equal(call.stdout.trim(), "echo:ok");
 });
 
+test("with no --scope, login asks for the scopes the server advertises", async () => {
+  await setup({ scopesSupported: ["example:read", "example:write"] });
+  const result = await auth(["login", "example"]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(mock.stats.authorizeQueries[0].scope, "example:read example:write");
+});
+
+test("the scope in the 401 challenge wins over scopes_supported", async () => {
+  await setup({ scopesSupported: ["example:read", "example:write"], challengeScope: "example:read" });
+  const result = await auth(["login", "example"]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(mock.stats.authorizeQueries[0].scope, "example:read");
+});
+
+test("an explicit --scope wins over what the server advertises", async () => {
+  await setup({ scopesSupported: ["example:read", "example:write"] }, ["--scope", "example:write"]);
+  const result = await auth(["login", "example"]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(mock.stats.authorizeQueries[0].scope, "example:write");
+});
+
+test("a server that advertises no scopes gets no scope parameter", async () => {
+  await setup();
+  const result = await auth(["login", "example"]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal("scope" in mock.stats.authorizeQueries[0], false);
+});
+
 test("a pre-registered client id is used and no registration is made", async () => {
   await setup({}, ["--client-id", "preregistered-client"]);
   const result = await auth(["login", "example"]);
