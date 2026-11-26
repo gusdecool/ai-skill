@@ -37,8 +37,8 @@ async function request(name, method, params) {
     try {
       return await mcpRequest(server.url, token, method, params);
     } catch (again) {
-      if (again instanceof Unauthorized) throw new CliError(`${name} rejected the token; run gd-mcp-auth login ${name}`);
-      throw again;
+      if (!(again instanceof Unauthorized)) throw again;
+      throw new CliError(`${name} rejected the token; run gd-mcp-auth login ${name}`);
     }
   }
 }

@@ -159,7 +159,7 @@ test("a token is never passed on a command line to the keychain command", async 
   const log = readFileSync(join(env.FAKE_KEYCHAIN_DIR, "argv.log"), "utf8");
   assert.ok(log.includes('["-i"]'));
   assert.ok(!log.includes(tokens.access_token) && !log.includes(tokens.refresh_token));
-  assert.ok(!log.includes("-w"), "no -w argument on a command line");
+  assert.ok(!log.includes("add-generic-password"), "writes go through stdin, not argv");
 });
 
 test("a keychain write that gets cut short is detected, not saved as good", () => {

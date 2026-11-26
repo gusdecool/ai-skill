@@ -1,0 +1,12 @@
+#!/usr/bin/env node
+// mcp-auth: see SKILL.md. Thin entry point; the code is in lib/auth-cli.mjs and needs gd-mcp-client installed too.
+import("./lib/auth-cli.mjs").then((m) => m.main(process.argv.slice(2))).then(
+  (code) => {
+    process.exitCode = code;
+  },
+  (error) => {
+    const missing = error.code === "ERR_MODULE_NOT_FOUND";
+    console.error(missing ? "gd-mcp-auth needs the gd-mcp-client skill installed next to it" : error);
+    process.exitCode = 1;
+  },
+);

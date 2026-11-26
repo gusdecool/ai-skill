@@ -7,7 +7,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --test \"tools/model-watch/*.test.ts\"",
+    "test": "node --test \"tools/model-watch/*.test.ts\" \"tests/mcp/*.test.mjs\"",
     "model-watch": "node tools/model-watch/model-watch.ts"
   }
 }
