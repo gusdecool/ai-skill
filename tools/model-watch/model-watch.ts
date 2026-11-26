@@ -114,9 +114,10 @@ const htmlToText = (html: string): string =>
   html
     .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
     .replace(/<[^>]*>/g, " ")
-    .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&nbsp;/g, " ")
+    // Last, so "&amp;quot;" becomes the text "&quot;" and is not decoded a second time (CodeQL js/double-escaping).
+    .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ");
 
 /** Cuts the page to the text between the start and end markers; a missing marker throws. */

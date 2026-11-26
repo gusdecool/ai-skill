@@ -116,6 +116,17 @@ test("extractModels reads slugs and prices inside the scope and keeps the first 
   ]);
 });
 
+/** Checks that an escaped entity in an HTML page is decoded once, so "&amp;quot;" reads as the text "&quot;". */
+test("extractModels decodes an HTML entity once, not twice", () => {
+  const source: Source = {
+    url: "https://example.test",
+    pattern: "(?<slug>K\\d) &quot;price&quot; \\$(?<price>[\\d.]+)",
+    format: "html",
+  };
+  const found: ModelInfo[] = extractModels("Kimi", source, "<p>K1 &amp;quot;price&amp;quot; $5</p>");
+  assert.deepEqual(found, [{ provider: "Kimi", slug: "K1", outputPrice: 5 }]);
+});
+
 test("extractModels applies the price scale and the ignore list", () => {
   const source: Source = {
     url: "https://example.test",
