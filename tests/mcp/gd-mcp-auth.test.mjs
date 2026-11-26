@@ -2,12 +2,12 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startMock } from "./mock-server.mjs";
 import { AUTH, CLIENT, makeEnv, runScript } from "./helpers.mjs";
-import { loadSecret } from "../../skills/gd-mcp-client/scripts/lib/store.mjs";
+import { loadSecret, saveSecret } from "../../skills/gd-mcp-client/scripts/lib/store.mjs";
 import { listen } from "../../skills/gd-mcp-auth/scripts/lib/callback.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -161,6 +161,23 @@ test("--no-browser prints the address and accepts the pasted redirect URL", asyn
   assert.equal(await finished, 0);
   assert.match(out, /signed in as example/);
   assert.ok(loadSecret("example").accessToken);
+});
+
+test("migrate moves a keychain token into the token file and removes the keychain entry", async () => {
+  await setup();
+  saveSecret("example", { accessToken: "migrating-access-value", refreshToken: "migrating-refresh-value" });
+  const result = await auth(["migrate", "example"]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /migrated example/);
+  assertClean(result, ["migrating-access-value", "migrating-refresh-value"]);
+  const file = join(process.env.GD_MCP_HOME, "tokens", "example.json");
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  const stored = JSON.parse(Buffer.from(readFileSync(file, "utf8").trim(), "base64url").toString("utf8"));
+  assert.equal(stored.accessToken, "migrating-access-value");
+  assert.equal(loadSecret("example"), null, "the keychain entry is gone");
+  const again = await auth(["migrate", "example"]);
+  assert.match(again.stdout, /nothing to migrate: example/);
+  assert.ok(existsSync(file));
 });
 
 test("an API token is read from stdin, saved, and never printed", async () => {

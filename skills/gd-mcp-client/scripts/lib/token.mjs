@@ -1,7 +1,7 @@
 // Gets a usable access token for a server and refreshes it when it has expired.
 import { assertSafeUrl } from "./paths.mjs";
 import { CliError, redact } from "./redact.mjs";
-import { loadSecret, saveSecret } from "./store.mjs";
+import { canSaveSecret, loadSecret, saveSecret } from "./store.mjs";
 
 const SKEW_MS = 60_000;
 const TIMEOUT_MS = 30_000;
@@ -14,6 +14,14 @@ export async function refreshToken(name, record, resource) {
     throw new CliError(`the token for ${name} has expired and cannot be refreshed; run gd-mcp-auth login ${name}`);
   }
   assertSafeUrl(record.tokenEndpoint, "token endpoint");
+  // Never refresh when the result cannot be saved: a server that rotates refresh tokens would lock out every agent.
+  if (!canSaveSecret(name)) {
+    throw new CliError(
+      `the token for ${name} has expired and this process cannot save a refreshed one (read-only sandbox); ` +
+        "run any gd-mcp-client command from a normal terminal or an agent without that sandbox, which refreshes it " +
+        "for all",
+    );
+  }
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: record.refreshToken,

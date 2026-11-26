@@ -2,4 +2,6 @@
 export { assertName, assertSafeUrl } from "../../../gd-mcp-client/scripts/lib/paths.mjs";
 export { CliError, redact } from "../../../gd-mcp-client/scripts/lib/redact.mjs";
 export { findServer, loadRegistry, saveRegistry } from "../../../gd-mcp-client/scripts/lib/registry.mjs";
-export { deleteSecret, loadSecret, saveSecret } from "../../../gd-mcp-client/scripts/lib/store.mjs";
+export {
+  deleteSecret, loadSecret, migrateKeychainToFile, saveSecret,
+} from "../../../gd-mcp-client/scripts/lib/store.mjs";

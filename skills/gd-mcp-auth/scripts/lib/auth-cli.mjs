@@ -4,7 +4,8 @@ import { listen, readPastedRedirect } from "./callback.mjs";
 import { authorizationUrl, checkIssuer, chooseClientId, discover, exchangeCode, makePkce } from "./oauth.mjs";
 import { readSecret } from "./secret-input.mjs";
 import {
-  assertName, assertSafeUrl, CliError, deleteSecret, findServer, loadRegistry, loadSecret, saveRegistry, saveSecret,
+  assertName, assertSafeUrl, CliError, deleteSecret, findServer, loadRegistry, loadSecret, migrateKeychainToFile,
+  saveRegistry, saveSecret,
 } from "./shared.mjs";
 
 const LOGIN_TIMEOUT_MS = Number(process.env.GD_MCP_LOGIN_TIMEOUT_MS) || 5 * 60 * 1000;
@@ -13,7 +14,8 @@ const USAGE = `usage:
   mcp-auth login <name> [--no-browser]
   mcp-auth status [<name>]
   mcp-auth logout <name>
-  mcp-auth remove <name>`;
+  mcp-auth remove <name>
+  mcp-auth migrate [<name>]`;
 
 /**
  * Splits arguments into positional values and --flags (a flag takes a value unless it is --no-browser).
@@ -192,7 +194,22 @@ function remove(args) {
   return 0;
 }
 
-const COMMANDS = { add, login, status, logout, remove };
+/**
+ * migrate: moves tokens saved in the macOS Keychain (the old default) into the file store, one server or all.
+ */
+function migrate(args) {
+  const registry = loadRegistry();
+  const names = args.length > 0 ? [args[0]] : Object.keys(registry.servers);
+  if (names.length === 0) console.log("no servers registered");
+  for (const name of names) {
+    requireServer(registry, name);
+    const moved = migrateKeychainToFile(name);
+    console.log(moved ? `migrated ${name} from the keychain to the token file` : `nothing to migrate: ${name}`);
+  }
+  return 0;
+}
+
+const COMMANDS = { add, login, status, logout, remove, migrate };
 
 /**
  * Runs the command named by the first argument and returns its exit code. Errors print one redacted line.

@@ -1,6 +1,6 @@
 ---
 name: gd-mcp-auth
-description: Use when the user wants to add, connect, sign in to, re-authenticate, sign out of or remove an MCP server for the shared MCP client, for example "add the X MCP" or "log in to the X MCP again". Runs the one-time OAuth login in the user's own browser, or stores an API token, and saves it in the macOS Keychain without ever showing it to the agent. Not for calling or listing a server's tools (use gd-mcp-client), and not for changing an agent's own MCP settings.
+description: Use when the user wants to add, connect, sign in to, re-authenticate, sign out of or remove an MCP server for the shared MCP client, for example "add the X MCP" or "log in to the X MCP again". Runs the one-time OAuth login in the user's own browser, or stores an API token, and saves it in one token file that every agent can read, without ever showing it to the agent. Not for calling or listing a server's tools (use gd-mcp-client), and not for changing an agent's own MCP settings.
 license: MIT
 metadata:
   author: gusdecool
@@ -22,6 +22,7 @@ skill's folder. It prints status lines only. **The agent never sees a token, a l
 | `mcp-auth status [<name>]` | Prints signed in, expired or not signed in. Never the token |
 | `mcp-auth logout <name>` | Deletes the saved token, keeps the registry entry |
 | `mcp-auth remove <name>` | Deletes the saved token and the registry entry |
+| `mcp-auth migrate [<name>]` | Moves a token saved in the macOS Keychain by an earlier version into the token file |
 
 ## Steps to add a server
 
@@ -38,8 +39,11 @@ skill's folder. It prints status lines only. **The agent never sees a token, a l
 ## Rules
 
 - Do these steps only when the user asks to add, sign in to, sign out of or remove a server.
-- Tokens are kept in the macOS Keychain (one entry per server), or a 0600 file under `~/.config/gd-mcp/tokens/` where
-  there is no keychain. This stops accidental leaks (git, logs, chat); it does not stop malware running as the user.
+- Tokens are kept in a 0600 file per server under `~/.config/gd-mcp/tokens/`, the same for every agent. Not the macOS
+  Keychain: an agent in a sandbox (Codex's default) cannot read it, and the sign-in must work in all agents. This stops
+  accidental leaks (git, logs, chat); it does not stop malware running as the user.
+- A token saved in the Keychain by an earlier version is moved with `mcp-auth migrate [<name>]`: it copies the value
+  into the file, checks the copy, deletes the Keychain entry and prints status only.
 - With no `--scope`, login asks for the scope in the server's 401 challenge, else the resource's `scopes_supported`, else
   none. A server that refuses a request with no scope needs `--scope` or that advertisement. Why: one server answered
   "This authorization request is not valid" to a login with no scope.
@@ -47,4 +51,3 @@ skill's folder. It prints status lines only. **The agent never sees a token, a l
   dynamic registration), PKCE S256, a random `state`, the `resource` parameter, an `iss` check, a listener on
   `127.0.0.1` on a random port that accepts one request, and a 5 minute timeout.
 - If login fails with a message about the server, report that message. Do not retry in a loop.
-- If the keychain is locked, tell the user to unlock it; do not switch to the file store on your own.

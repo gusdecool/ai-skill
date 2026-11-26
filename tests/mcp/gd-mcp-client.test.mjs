@@ -1,11 +1,11 @@
 // Tests for gd-mcp-client against the local mock MCP server. No live API is called.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { startMock } from "./mock-server.mjs";
 import { CLIENT, makeEnv, runScript, writeRegistry } from "./helpers.mjs";
-import { loadSecret, saveSecret } from "../../skills/gd-mcp-client/scripts/lib/store.mjs";
+import { loadSecret, saveSecret, storeKind } from "../../skills/gd-mcp-client/scripts/lib/store.mjs";
 import { redact } from "../../skills/gd-mcp-client/scripts/lib/redact.mjs";
 
 const { env } = makeEnv();
@@ -185,6 +185,36 @@ test("the file store keeps the token in a 0600 file inside a 0700 folder", async
     assert.equal(statSync(file).mode & 0o777, 0o600);
     assert.equal(statSync(join(env.GD_MCP_HOME, "tokens")).mode & 0o777, 0o700);
     assert.equal(loadSecret("example").accessToken, "file-store-value");
+  } finally {
+    process.env.GD_MCP_STORE = "keychain";
+  }
+});
+
+test("the file store is the default, so a sandboxed agent that cannot reach the keychain still reads the sign-in", () => {
+  delete process.env.GD_MCP_STORE;
+  try {
+    assert.equal(storeKind(), "file");
+  } finally {
+    process.env.GD_MCP_STORE = "keychain";
+  }
+});
+
+test("an expired token is not refreshed when this process cannot save it (read-only sandbox)", async () => {
+  process.env.GD_MCP_STORE = "file";
+  try {
+    const tokens = mock.issueTokens();
+    seed({ accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: Date.now() - 1000 });
+    const file = join(env.GD_MCP_HOME, "tokens", "example.json");
+    chmodSync(file, 0o400);
+    const before = mock.stats.tokenGrants.length;
+    const result = await runScript(join(CLIENT, "mcp-call"), ["example", "ping", "{}"], {
+      env: { GD_MCP_STORE: "file" },
+    });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /cannot save a refreshed one/);
+    assert.equal(mock.stats.tokenGrants.length, before, "no refresh request was sent");
+    assertNoSecrets(result, [tokens.access_token, tokens.refresh_token]);
+    chmodSync(file, 0o600);
   } finally {
     process.env.GD_MCP_STORE = "keychain";
   }

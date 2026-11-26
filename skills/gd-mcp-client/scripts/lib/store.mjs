@@ -1,7 +1,8 @@
-// Token store: one macOS Keychain entry per server, or a 0600 file where no keychain exists.
-// A token is written through `security -i` on stdin, never as a command-line argument, so `ps` cannot show it.
+// Token store: a 0600 file per server by default, so every agent (including one in a sandbox that cannot reach the
+// macOS Keychain) reads the same sign-in. A Keychain entry per server is opt-in with GD_MCP_STORE=keychain.
+// A Keychain token is written through `security -i` on stdin, never as a command-line argument, so `ps` cannot show it.
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { configDir, assertName } from "./paths.mjs";
 import { CliError, redact } from "./redact.mjs";
@@ -12,13 +13,14 @@ const MAX_KEYCHAIN_VALUE = 3000;
 const NOT_FOUND = 44;
 
 /**
- * Returns the store in use: GD_MCP_STORE (keychain or file) when set, else the keychain on macOS, else a file.
+ * Returns the store in use: GD_MCP_STORE (keychain or file) when set, else the file store. The default is the file
+ * because an agent in a sandbox (Codex, for one) cannot read the Keychain, and one sign-in must work in every agent.
  */
 export function storeKind() {
   const forced = process.env.GD_MCP_STORE;
   if (forced === "keychain" || forced === "file") return forced;
   if (forced) throw new CliError('GD_MCP_STORE must be "keychain" or "file"');
-  return process.platform === "darwin" ? "keychain" : "file";
+  return "file";
 }
 
 /**
@@ -50,9 +52,6 @@ export function saveSecret(name, record) {
   const value = Buffer.from(JSON.stringify(record)).toString("base64url");
   if (storeKind() === "file") {
     const file = join(tokenDir(), `${name}.json`);
-    if (!existsSync(file)) {
-      process.stderr.write("warning: no keychain in use; token kept in a 0600 file under ~/.config/gd-mcp/\n");
-    }
     writeFileSync(file, value, { mode: 0o600 });
     chmodSync(file, 0o600);
     return;
@@ -76,6 +75,57 @@ export function saveSecret(name, record) {
 }
 
 /**
+ * Reads the encoded value of a server's Keychain entry, or null when there is none.
+ */
+function readKeychainValue(name) {
+  const result = security(["find-generic-password", "-s", SERVICE, "-a", name, "-w"]);
+  if (result.status === NOT_FOUND) return null;
+  if (result.status !== 0) {
+    throw new CliError(`keychain read failed (is the keychain locked?): ${redact(result.stderr).trim()}`);
+  }
+  return result.stdout.trim();
+}
+
+/**
+ * Says whether this process can save a changed token for the server. A sandboxed agent often can read the token
+ * file but not write it, and a refreshed token that cannot be saved would lock out every other agent if the server
+ * rotates it.
+ */
+export function canSaveSecret(name) {
+  assertName(name);
+  if (storeKind() === "keychain") return true;
+  const file = join(configDir(), "tokens", `${name}.json`);
+  try {
+    accessSync(existsSync(file) ? file : join(configDir(), "tokens"), constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Moves a server's token from the Keychain into the file store, checks the copy, then deletes the Keychain entry.
+ * Returns false when the Keychain holds none. The value is never printed.
+ */
+export function migrateKeychainToFile(name) {
+  assertName(name);
+  const value = readKeychainValue(name);
+  if (value === null) return false;
+  const dir = tokenDir();
+  const file = join(dir, `${name}.json`);
+  writeFileSync(file, value, { mode: 0o600 });
+  chmodSync(file, 0o600);
+  if (readFileSync(file, "utf8").trim() !== value) {
+    throw new CliError("the copy could not be verified; the Keychain entry was kept");
+  }
+  const removed = security(["delete-generic-password", "-s", SERVICE, "-a", name]);
+  if (removed.status !== 0 && removed.status !== NOT_FOUND) {
+    throw new CliError(`token copied, but the Keychain entry could not be deleted: ${redact(removed.stderr).trim()}`);
+  }
+  return true;
+}
+
+/**
  * Loads the secret record for a server, or null when there is none.
  */
 export function loadSecret(name) {
@@ -86,12 +136,8 @@ export function loadSecret(name) {
     if (!existsSync(file)) return null;
     value = readFileSync(file, "utf8").trim();
   } else {
-    const result = security(["find-generic-password", "-s", SERVICE, "-a", name, "-w"]);
-    if (result.status === NOT_FOUND) return null;
-    if (result.status !== 0) {
-      throw new CliError(`keychain read failed (is the keychain locked?): ${redact(result.stderr).trim()}`);
-    }
-    value = result.stdout.trim();
+    value = readKeychainValue(name);
+    if (value === null) return null;
   }
   try {
     return JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
