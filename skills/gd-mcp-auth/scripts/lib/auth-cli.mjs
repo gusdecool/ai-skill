@@ -97,7 +97,7 @@ async function loginOauth(name, server, flags) {
       challenge: pkce.challenge,
       state: pkce.state,
       resource: server.url,
-      scope: server.auth.scope ?? flags.scope,
+      scope: server.auth.scope ?? flags.scope ?? meta.requestedScope,
     });
     const waits = [callback.result];
     if (flags.noBrowser) {

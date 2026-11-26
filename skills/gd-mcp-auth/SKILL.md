@@ -40,6 +40,9 @@ skill's folder. It prints status lines only. **The agent never sees a token, a l
 - Do these steps only when the user asks to add, sign in to, sign out of or remove a server.
 - Tokens are kept in the macOS Keychain (one entry per server), or a 0600 file under `~/.config/gd-mcp/tokens/` where
   there is no keychain. This stops accidental leaks (git, logs, chat); it does not stop malware running as the user.
+- With no `--scope`, login asks for the scope in the server's 401 challenge, else the resource's `scopes_supported`, else
+  none. A server that refuses a request with no scope needs `--scope` or that advertisement. Why: one server answered
+  "This authorization request is not valid" to a login with no scope.
 - Login follows the MCP authorization spec: discovery, a client id (pre-registered, then a client metadata URL, then
   dynamic registration), PKCE S256, a random `state`, the `resource` parameter, an `iss` check, a listener on
   `127.0.0.1` on a random port that accepts one request, and a 5 minute timeout.

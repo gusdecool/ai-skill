@@ -38,7 +38,9 @@ async function discoverResource(resourceUrl) {
   }).catch((error) => {
     throw new CliError(`cannot reach ${url.origin}: ${redact(error.message)}`);
   });
-  const pointer = /resource_metadata="([^"]+)"/.exec(probe.headers.get("www-authenticate") ?? "");
+  const challenge = probe.headers.get("www-authenticate") ?? "";
+  const pointer = /resource_metadata="([^"]+)"/.exec(challenge);
+  const challengeScope = /\bscope="([^"]+)"/.exec(challenge)?.[1];
   if (pointer) candidates.push(pointer[1]);
   const path = url.pathname === "/" ? "" : url.pathname;
   candidates.push(`${url.origin}/.well-known/oauth-protected-resource${path}`);
@@ -50,7 +52,7 @@ async function discoverResource(resourceUrl) {
       if (data.resource && !sameUrl(data.resource, resourceUrl)) {
         throw new CliError("the server's resource metadata names a different resource; refusing to sign in");
       }
-      return data;
+      return { ...data, challengeScope };
     }
   }
   throw new CliError("no OAuth protected-resource metadata found; is this server OAuth-protected?");
@@ -86,11 +88,15 @@ async function discoverAuthServer(issuer) {
 }
 
 /**
- * Runs discovery for a resource URL. Returns the authorization server metadata.
+ * Runs discovery for a resource URL. Returns the authorization server metadata plus `requestedScope`, the scope to ask
+ * for when the user set none: the 401 challenge's `scope`, else the resource's `scopes_supported` (MCP authorization
+ * spec), else undefined (no scope is sent).
  */
 export async function discover(resourceUrl) {
   const resource = await discoverResource(resourceUrl);
-  return discoverAuthServer(resource.authorization_servers[0]);
+  const meta = await discoverAuthServer(resource.authorization_servers[0]);
+  const supported = Array.isArray(resource.scopes_supported) ? resource.scopes_supported.join(" ") : "";
+  return { ...meta, requestedScope: resource.challengeScope ?? (supported || undefined) };
 }
 
 /**

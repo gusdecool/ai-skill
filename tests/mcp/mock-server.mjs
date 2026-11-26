@@ -19,7 +19,8 @@ async function readBody(req) {
 
 /**
  * Starts the mock. Options: expiresIn (seconds, default 3600), issuerOverride (wrong `iss` on the redirect),
- * stateOverride (wrong `state` on the redirect), refreshable (default true), cimd (advertise CIMD support).
+ * stateOverride (wrong `state` on the redirect), refreshable (default true), cimd (advertise CIMD support),
+ * scopesSupported (the resource's scopes_supported), challengeScope (a scope in the 401 challenge).
  * Returns the base URL, the MCP URL, counters for assertions, helpers and close().
  */
 export async function startMock(options = {}) {
@@ -91,7 +92,9 @@ export async function startMock(options = {}) {
     const valid = staticTokens.has(token) || (known && known.expires > Date.now());
     if (options.requireAuth !== false && !valid) {
       return json(res, 401, { error: "invalid_token" }, {
-        "www-authenticate": `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`,
+        "www-authenticate": `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"${
+          options.challengeScope ? `, scope="${options.challengeScope}"` : ""
+        }`,
       });
     }
     if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
@@ -160,7 +163,11 @@ export async function startMock(options = {}) {
         return res.end();
       }
       if (url.pathname === "/.well-known/oauth-protected-resource/mcp") {
-        return json(res, 200, { resource: `${base}/mcp`, authorization_servers: [base] });
+        return json(res, 200, {
+          resource: `${base}/mcp`,
+          authorization_servers: [base],
+          ...(options.scopesSupported ? { scopes_supported: options.scopesSupported } : {}),
+        });
       }
       if (url.pathname === "/.well-known/oauth-authorization-server") {
         return json(res, 200, {
