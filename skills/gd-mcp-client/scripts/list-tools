@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+// list-tools: see SKILL.md. Thin entry point; the code is in lib/client-cli.mjs.
+import("./lib/client-cli.mjs").then((m) => m.run(m.listTools, process.argv.slice(2)));

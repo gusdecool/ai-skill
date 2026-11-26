@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "servers": {
+    "example": {
+      "transport": "http",
+      "url": "https://mcp.example.com/mcp",
+      "auth": { "type": "oauth" }
+    },
+    "example-token": {
+      "transport": "http",
+      "url": "https://mcp.example.com/other",
+      "auth": { "type": "bearer" }
+    },
+    "example-open": {
+      "transport": "http",
+      "url": "https://mcp.example.com/public",
+      "auth": { "type": "none" }
+    }
+  }
+}

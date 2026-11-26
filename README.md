@@ -16,6 +16,8 @@ that read the shared skills folder.
 | `gd-infra-conventions` | IaC, CI pinning, migrations, deploy logs | [SKILL.md][gd-infra-conventions] |
 | `gd-load-balancer` | Spread tasks across AI providers by quota | [SKILL.md][gd-load-balancer] |
 | `gd-long-task-communication` | Estimate, follow-ups, at limit | [SKILL.md][gd-long-task-communication] |
+| `gd-mcp-auth` | Add an MCP server to the shared registry and sign in | [SKILL.md][gd-mcp-auth] |
+| `gd-mcp-client` | List and call tools of registered MCP servers | [SKILL.md][gd-mcp-client] |
 | `gd-model-policy` | Model tier per phase of agent work | [SKILL.md][gd-model-policy] |
 | `gd-mysql-branch` | MySQL branching: one database per git branch | [SKILL.md][gd-mysql-branch] |
 | `gd-project-standards` | Sync stack rules into repo AGENTS.md | [SKILL.md][gd-project-standards] |
@@ -33,6 +35,8 @@ the same in every agent. A Claude Code plugin adds its own prefix (see Install).
 [gd-infra-conventions]: skills/gd-infra-conventions/SKILL.md
 [gd-load-balancer]: skills/gd-load-balancer/SKILL.md
 [gd-long-task-communication]: skills/gd-long-task-communication/SKILL.md
+[gd-mcp-auth]: skills/gd-mcp-auth/SKILL.md
+[gd-mcp-client]: skills/gd-mcp-client/SKILL.md
 [gd-model-policy]: skills/gd-model-policy/SKILL.md
 [gd-mysql-branch]: skills/gd-mysql-branch/SKILL.md
 [gd-project-standards]: skills/gd-project-standards/SKILL.md
@@ -283,6 +287,9 @@ bash tests/gd-mysql-branch.test.sh
 pnpm test
 ```
 
+`pnpm test` also runs `tests/mcp/`, the tests of `gd-mcp-client` and `gd-mcp-auth` against a local mock MCP server
+and mock login server. They use a temp folder and a fake keychain, never the real ones.
+
 Node 24 or newer and pnpm are required for the model watch tests.
 The MySQL integration tests start a throwaway `mysql:8.0` container and remove it at the end. Docker is required.
 CI runs the same checks plus `shellcheck`.
@@ -290,6 +297,11 @@ CI runs the same checks plus `shellcheck`.
 ## UAT
 
 UAT: none
+
+Manual check for `gd-mcp-client` and `gd-mcp-auth`, in each of Claude, Codex and Antigravity: install the skills,
+register a test server with `mcp-auth add`, sign in with `mcp-auth login`, then ask the agent "use the example MCP
+server". Check that the agent loads `gd-mcp-client`, that `list-tools` returns the tool list, and note whether it
+used the skill or its own MCP tools. Also ask for a server that is not registered and check that it falls back.
 
 ## License
 

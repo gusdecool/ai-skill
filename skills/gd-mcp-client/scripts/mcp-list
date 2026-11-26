@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+// mcp-list: see SKILL.md. Thin entry point; the code is in lib/client-cli.mjs.
+import("./lib/client-cli.mjs").then((m) => m.run(m.mcpList, process.argv.slice(2)));
