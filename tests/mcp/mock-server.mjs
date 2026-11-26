@@ -191,7 +191,9 @@ export async function startMock(options = {}) {
       if (url.pathname === "/token") return await token(req, res);
       return json(res, 404, { error: "not found" });
     } catch (error) {
-      return json(res, 500, { error: String(error) });
+      // Keep the cause on the mock's own stderr; the client only gets a fixed message (CodeQL js/stack-trace-exposure).
+      console.error("mock server error:", error);
+      return json(res, 500, { error: "internal mock server error" });
     }
   });
 
